@@ -97,6 +97,7 @@ async function startAuthServer(oAuth2Client: any): Promise<void> {
 
   app.get("/oauth2callback", async (req, res) => {
     const code = req.query.code as string;
+    console.log(code)
     if (!code) {
       log.error("Authorization code not provided.");
       res.status(400).send("Authorization code not provided.");
