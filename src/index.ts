@@ -16,7 +16,8 @@ const REFRESH_MAILS_TIME_MS = 60000; // Refresh interval in milliseconds (e.g., 
 const log = {
   info: (message: string) => console.log(`[INFO]: ${message}`),
   warn: (message: string) => console.warn(`[WARNING]: ${message}`),
-  error: (message: string) => console.error(`[ERROR]: ${message}`),
+  error: (message: string, error?: unknown) =>
+    console.error(`[ERROR]: ${message}`),
 };
 
 // -------------------- Authorization --------------------
@@ -28,7 +29,11 @@ async function authorize(): Promise<gmail_v1.Gmail> {
   const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, "utf-8"));
   const { client_id, client_secret, redirect_uris } = credentials.web;
 
-  const oAuth2Client = new google.auth.OAuth2(client_id, client_secret,redirect_uris);
+  const oAuth2Client = new google.auth.OAuth2(
+    client_id,
+    client_secret,
+    redirect_uris,
+  );
 
   if (fs.existsSync(TOKEN_PATH)) {
     log.info("Using existing token for Gmail API authentication...");
@@ -96,7 +101,7 @@ async function startAuthServer(oAuth2Client: any): Promise<void> {
 
   app.get("/oauth2callback", async (req, res) => {
     const code = req.query.code as string;
-    console.log(code)
+    console.log(code);
     if (!code) {
       log.error("Authorization code not provided.");
       res.status(400).send("Authorization code not provided.");
@@ -132,12 +137,15 @@ async function startAuthServer(oAuth2Client: any): Promise<void> {
         </html>
       `);
     } catch (error) {
-      log.error("Failed to exchange authorization code.");
+      log.error("Failed to exchange authorization code.", error);
       res.status(500).send("Failed to retrieve access token.");
     }
   });
 
-  app.listen(PORT, () => log.info(`Authorization server running on http://localhost:${PORT}`));
+  app.listen(
+    PORT,
+    () => log.info(`Authorization server running on http://localhost:${PORT}`),
+  );
 }
 
 // -------------------- Email Processing --------------------
@@ -160,17 +168,26 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
   }
 
   for (const message of messages) {
-    const msg = await gmail.users.messages.get({ userId: "me", id: message.id!, format: "full" });
+    const msg = await gmail.users.messages.get({
+      userId: "me",
+      id: message.id!,
+      format: "full",
+    });
     const headers = msg.data.payload?.headers || [];
-    const subject = headers.find((header) => header.name === "Subject")?.value || "No Subject";
-    const from = headers.find((header) => header.name === "From")?.value || "Unknown Sender";
+    const subject = headers.find((header) =>
+      header.name === "Subject"
+    )?.value || "No Subject";
+    const from = headers.find((header) => header.name === "From")?.value ||
+      "Unknown Sender";
 
     if (!subject.includes("ALERT")) {
       log.info(`Skipping email with subject: ${subject}`);
       continue;
     }
 
-    const bodyPart = msg.data.payload?.parts?.find((part) => part.mimeType === "text/plain");
+    const bodyPart = msg.data.payload?.parts?.find((part) =>
+      part.mimeType === "text/plain"
+    );
     const body = bodyPart?.body?.data
       ? Buffer.from(bodyPart.body.data, "base64").toString("utf-8")
       : "No Body Content";
@@ -186,13 +203,17 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
     log.info(`Processed and marked email as read: ${subject}`);
   }
 
-  log.info("Email fetch and process cycle completed. Waiting for next refresh...");
+  log.info(
+    "Email fetch and process cycle completed. Waiting for next refresh...",
+  );
 }
 
 /**
  * Sends email content to Discord using a webhook.
  */
-async function sendToDiscord(emailData: { from: string; subject: string; body: string }): Promise<void> {
+async function sendToDiscord(
+  emailData: { from: string; subject: string; body: string },
+): Promise<void> {
   try {
     const messagePayload = {
       content: null,
@@ -215,7 +236,11 @@ async function sendToDiscord(emailData: { from: string; subject: string; body: s
     await axios.post(WEBHOOK_URL, messagePayload);
     log.info(`Message sent to Discord: ${emailData.subject}`);
   } catch (error: any) {
-    log.error(`Failed to send email to Discord: ${error.response?.data || error.message}`);
+    log.error(
+      `Failed to send email to Discord: ${
+        error.response?.data || error.message
+      }`,
+    );
   }
 }
 
@@ -235,6 +260,8 @@ async function sendToDiscord(emailData: { from: string; subject: string; body: s
       await fetchAndProcessEmails(gmail);
     }, REFRESH_MAILS_TIME_MS);
   } catch (error) {
-    log.error(`An error occurred: ${error instanceof Error ? error.message : error}`);
+    log.error(
+      `An error occurred: ${error instanceof Error ? error.message : error}`,
+    );
   }
 })();
