@@ -162,16 +162,18 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       });
 
       const headers = msg.data.payload?.headers || [];
-      const subject = headers.find((header) => header.name === "Subject")?.value || "No Subject";
+      let subject =
+        headers.find((header) => header.name === "Subject")?.value || "No Subject";
+
+      // Limit subject to 50 words
+      subject = subject.split(/\s+/).slice(0, 50).join(" ");
+
       const from = headers.find((header) => header.name === "From")?.value || "Unknown Sender";
 
-      const bodyPart = msg.data.payload?.parts?.find((part) => part.mimeType === "text/plain");
-      const body = bodyPart?.body?.data
-        ? Buffer.from(bodyPart.body.data, "base64").toString("utf-8")
-        : "No Body Content";
-
       log.info(`Email details - From: ${from}, Subject: ${subject}`);
-      await sendToDiscord({ from, subject, body });
+
+      // You can add further processing here if necessary, e.g., sending to Discord or marking as read
+      await sendToDiscord({ from, subject, body: "Email content omitted for brevity." });
 
       await gmail.users.messages.modify({
         userId: "me",
@@ -189,6 +191,7 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
     }
   }
 }
+
 
 /**
  * Sends email content to Discord using a webhook.
