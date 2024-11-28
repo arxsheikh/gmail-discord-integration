@@ -29,7 +29,7 @@ async function authorize(): Promise<gmail_v1.Gmail> {
   const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, "utf-8"));
   const { client_id, client_secret, redirect_uris } = credentials.web;
 
-  const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, `https://gmail-discord-integration.vercel.app/oauth2callback`);
+  const oAuth2Client = new google.auth.OAuth2(client_id, client_secret,redirect_uris);
 
   if (fs.existsSync(TOKEN_PATH)) {
     log.info("Using existing token for Gmail API authentication...");
