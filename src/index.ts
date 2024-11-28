@@ -3,10 +3,12 @@ import fs from "fs";
 import path from "path";
 import express from "express";
 import axios from "axios";
+import { PrismaClient } from "@prisma/client";
+
+const prisma = new PrismaClient();
 
 // -------------------- Configuration --------------------
 const SCOPES = ["https://www.googleapis.com/auth/gmail.modify"];
-const TOKEN_PATH = path.resolve(__dirname, "token.json");
 const CREDENTIALS_PATH = path.resolve(__dirname, "credentials.json");
 const PORT = 3000;
 const WEBHOOK_URL = "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL"; // Replace with your Discord webhook URL
@@ -35,31 +37,57 @@ async function authorize(): Promise<gmail_v1.Gmail> {
     redirect_uris
   );
 
-  if (fs.existsSync(TOKEN_PATH)) {
-    log.info("Using existing token for Gmail API authentication...");
-    const token = JSON.parse(fs.readFileSync(TOKEN_PATH, "utf-8"));
-    oAuth2Client.setCredentials(token);
+  const tokenRecord = await prisma.token.findFirst();
 
-    oAuth2Client.on("tokens", (tokens) => {
-      if (tokens.refresh_token) {
-        fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
-        log.info("Refresh token updated and saved.");
+  if (tokenRecord) {
+    log.info("Using existing token from database for Gmail API authentication...");
+    oAuth2Client.setCredentials({
+      access_token: tokenRecord.access_token,
+      refresh_token: tokenRecord.refresh_token || undefined,
+      scope: tokenRecord.scope || undefined, // Convert null to undefined
+      token_type: tokenRecord.token_type || undefined,
+      expiry_date: tokenRecord.expiry_date ? Number(tokenRecord.expiry_date) : undefined, // Convert bigint to number
+    });
+  
+    oAuth2Client.on("tokens", async (tokens) => {
+      if (tokens.access_token) {
+        await prisma.token.upsert({
+          where: { id: tokenRecord.id },
+          update: {
+            access_token: tokens.access_token,
+            refresh_token: tokens.refresh_token,
+            scope: tokens.scope,
+            token_type: tokens.token_type,
+            expiry_date: tokens.expiry_date ? BigInt(tokens.expiry_date) : null, // Convert number to bigint
+          },
+          create: {
+            access_token: tokens.access_token,
+            refresh_token: tokens.refresh_token,
+            scope: tokens.scope,
+            token_type: tokens.token_type,
+            expiry_date: tokens.expiry_date ? BigInt(tokens.expiry_date) : null,
+          },
+        });
+        log.info("Token updated in the database.");
       }
     });
-  } else {
-    log.warn("No token file found. Starting authorization process...");
+  
+  }else {
+    log.warn("No token found in the database. Starting authorization process...");
     await startAuthServer(oAuth2Client);
-
-    const token = JSON.parse(fs.readFileSync(TOKEN_PATH, "utf-8"));
-    oAuth2Client.setCredentials(token);
-
-    oAuth2Client.on("tokens", (tokens) => {
-      if (tokens.refresh_token) {
-        fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
-        log.info("Refresh token updated and saved.");
-      }
-    });
+  
+    const newToken = await prisma.token.findFirst();
+    if (newToken) {
+      oAuth2Client.setCredentials({
+        access_token: newToken.access_token,
+        refresh_token: newToken.refresh_token || undefined, // Convert null to undefined
+        scope: newToken.scope || undefined, // Convert null to undefined
+        token_type: newToken.token_type || undefined, // Convert null to undefined
+        expiry_date: newToken.expiry_date ? Number(newToken.expiry_date) : undefined, // Convert bigint to number
+      });
+    }
   }
+  
 
   log.info("Gmail API successfully authorized.");
   return google.gmail({ version: "v1", auth: oAuth2Client });
@@ -117,8 +145,25 @@ async function startAuthServer(oAuth2Client: any): Promise<void> {
       log.info(`Tokens received: ${JSON.stringify(tokens)}`);
       oAuth2Client.setCredentials(tokens);
 
-      fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
-      log.info("Authorization successful. Tokens saved to file.");
+      await prisma.token.upsert({
+        where: { id: 1 },
+        update: {
+          access_token: tokens.access_token!,
+          refresh_token: tokens.refresh_token,
+          scope: tokens.scope,
+          token_type: tokens.token_type,
+          expiry_date: tokens.expiry_date,
+        },
+        create: {
+          access_token: tokens.access_token!,
+          refresh_token: tokens.refresh_token,
+          scope: tokens.scope,
+          token_type: tokens.token_type,
+          expiry_date: tokens.expiry_date,
+        },
+      });
+
+      log.info("Authorization successful. Tokens saved to database.");
 
       const gmail = google.gmail({ version: "v1", auth: oAuth2Client });
       log.info("Fetching emails immediately after authorization...");
@@ -154,7 +199,6 @@ async function startAuthServer(oAuth2Client: any): Promise<void> {
 }
 
 // -------------------- Email Processing --------------------
-
 /**
  * Fetches and processes unread emails.
  */
@@ -257,15 +301,9 @@ async function sendToDiscord(emailData: { from: string; subject: string; body: s
 }
 
 // -------------------- Main Entry Point --------------------
-
 (async function main() {
   try {
     const gmail = await authorize();
-
-    if (fs.existsSync(TOKEN_PATH)) {
-      log.info("Fetching emails immediately after authorization...");
-      await fetchAndProcessEmails(gmail);
-    }
 
     setInterval(async () => {
       log.info("Waiting for the next scheduled email fetch...");
