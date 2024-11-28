@@ -17,7 +17,7 @@ const log = {
   info: (message: string) => console.log(`[INFO]: ${message}`),
   warn: (message: string) => console.warn(`[WARNING]: ${message}`),
   error: (message: string, error?: unknown) =>
-    console.error(`[ERROR]: ${message}`),
+    console.error(`[ERROR]: ${message}`, error),
 };
 
 // -------------------- Authorization --------------------
@@ -32,7 +32,7 @@ async function authorize(): Promise<gmail_v1.Gmail> {
   const oAuth2Client = new google.auth.OAuth2(
     client_id,
     client_secret,
-    redirect_uris,
+    redirect_uris
   );
 
   if (fs.existsSync(TOKEN_PATH)) {
@@ -77,7 +77,7 @@ async function startAuthServer(oAuth2Client: any): Promise<void> {
       scope: SCOPES,
     });
 
-    log.info(`Authorization server running on http://localhost:${PORT}`);
+    log.info(`Generated authorization URL: ${authUrl}`);
     res.send(`
       <!DOCTYPE html>
       <html lang="en">
@@ -101,7 +101,10 @@ async function startAuthServer(oAuth2Client: any): Promise<void> {
 
   app.get("/oauth2callback", async (req, res) => {
     const code = req.query.code as string;
-    console.log(code);
+
+    log.info("Authorization callback received.");
+    log.info(`Authorization code received: ${code || "None"}`);
+
     if (!code) {
       log.error("Authorization code not provided.");
       res.status(400).send("Authorization code not provided.");
@@ -109,7 +112,9 @@ async function startAuthServer(oAuth2Client: any): Promise<void> {
     }
 
     try {
+      log.info("Exchanging authorization code for tokens...");
       const { tokens } = await oAuth2Client.getToken(code);
+      log.info(`Tokens received: ${JSON.stringify(tokens)}`);
       oAuth2Client.setCredentials(tokens);
 
       fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
@@ -144,7 +149,7 @@ async function startAuthServer(oAuth2Client: any): Promise<void> {
 
   app.listen(
     PORT,
-    () => log.info(`Authorization server running on http://localhost:${PORT}`),
+    () => log.info(`Authorization server running on http://localhost:${PORT}`)
   );
 }
 
@@ -155,65 +160,71 @@ async function startAuthServer(oAuth2Client: any): Promise<void> {
  */
 async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
   log.info("Fetching latest unread emails...");
-  const res = await gmail.users.messages.list({
-    userId: "me",
-    maxResults: 10,
-    q: "is:unread",
-  });
-
-  const messages = res.data.messages || [];
-  if (messages.length === 0) {
-    log.info("No unread emails found.");
-    return;
-  }
-
-  for (const message of messages) {
-    const msg = await gmail.users.messages.get({
+  try {
+    const res = await gmail.users.messages.list({
       userId: "me",
-      id: message.id!,
-      format: "full",
+      maxResults: 10,
+      q: "is:unread",
     });
-    const headers = msg.data.payload?.headers || [];
-    const subject = headers.find((header) =>
-      header.name === "Subject"
-    )?.value || "No Subject";
-    const from = headers.find((header) => header.name === "From")?.value ||
-      "Unknown Sender";
 
-    if (!subject.includes("ALERT")) {
-      log.info(`Skipping email with subject: ${subject}`);
-      continue;
+    const messages = res.data.messages || [];
+    log.info(`Number of unread emails found: ${messages.length}`);
+
+    if (messages.length === 0) {
+      log.info("No unread emails found.");
+      return;
     }
 
-    const bodyPart = msg.data.payload?.parts?.find((part) =>
-      part.mimeType === "text/plain"
-    );
-    const body = bodyPart?.body?.data
-      ? Buffer.from(bodyPart.body.data, "base64").toString("utf-8")
-      : "No Body Content";
+    for (const message of messages) {
+      log.info(`Processing email with ID: ${message.id}`);
+      const msg = await gmail.users.messages.get({
+        userId: "me",
+        id: message.id!,
+        format: "full",
+      });
 
-    await sendToDiscord({ from, subject, body });
+      const headers = msg.data.payload?.headers || [];
+      const subject =
+        headers.find((header) => header.name === "Subject")?.value ||
+        "No Subject";
+      const from =
+        headers.find((header) => header.name === "From")?.value ||
+        "Unknown Sender";
 
-    await gmail.users.messages.modify({
-      userId: "me",
-      id: message.id!,
-      requestBody: { removeLabelIds: ["UNREAD"] },
-    });
+      if (!subject.includes("ALERT")) {
+        log.info(`Skipping email with subject: ${subject}`);
+        continue;
+      }
 
-    log.info(`Processed and marked email as read: ${subject}`);
+      const bodyPart = msg.data.payload?.parts?.find(
+        (part) => part.mimeType === "text/plain"
+      );
+      const body = bodyPart?.body?.data
+        ? Buffer.from(bodyPart.body.data, "base64").toString("utf-8")
+        : "No Body Content";
+
+      log.info(`Email details - From: ${from}, Subject: ${subject}`);
+      await sendToDiscord({ from, subject, body });
+
+      await gmail.users.messages.modify({
+        userId: "me",
+        id: message.id!,
+        requestBody: { removeLabelIds: ["UNREAD"] },
+      });
+
+      log.info(`Processed and marked email as read: ${subject}`);
+    }
+  } catch (error) {
+    log.error("Error fetching or processing emails.", error);
   }
 
-  log.info(
-    "Email fetch and process cycle completed. Waiting for next refresh...",
-  );
+  log.info("Email fetch and process cycle completed. Waiting for next refresh...");
 }
 
 /**
  * Sends email content to Discord using a webhook.
  */
-async function sendToDiscord(
-  emailData: { from: string; subject: string; body: string },
-): Promise<void> {
+async function sendToDiscord(emailData: { from: string; subject: string; body: string }): Promise<void> {
   try {
     const messagePayload = {
       content: null,
@@ -233,13 +244,14 @@ async function sendToDiscord(
       ],
     };
 
+    log.info("Sending email data to Discord...");
     await axios.post(WEBHOOK_URL, messagePayload);
     log.info(`Message sent to Discord: ${emailData.subject}`);
   } catch (error: any) {
     log.error(
       `Failed to send email to Discord: ${
         error.response?.data || error.message
-      }`,
+      }`
     );
   }
 }
@@ -260,8 +272,6 @@ async function sendToDiscord(
       await fetchAndProcessEmails(gmail);
     }, REFRESH_MAILS_TIME_MS);
   } catch (error) {
-    log.error(
-      `An error occurred: ${error instanceof Error ? error.message : error}`,
-    );
+    log.error(`An error occurred: ${error instanceof Error ? error.message : error}`);
   }
 })();
