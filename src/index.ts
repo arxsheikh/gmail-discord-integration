@@ -137,6 +137,9 @@ async function startAuthServer(oAuth2Client: any): Promise<void> {
 /**
  * Fetches and processes unread emails.
  */
+/**
+ * Fetches and processes unread emails.
+ */
 async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
   log.info("Fetching latest unread emails...");
   try {
@@ -168,13 +171,29 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       // Limit subject to 50 words
       subject = subject.split(/\s+/).slice(0, 50).join(" ");
 
+      // Skip emails without the word "ALERT" in uppercase in the subject
+      if (!subject.includes("ALERT")) {
+        log.info(`Skipping email - Subject does not contain "ALERT": ${subject}`);
+        continue;
+      }
+
       const from = headers.find((header) => header.name === "From")?.value || "Unknown Sender";
 
-      log.info(`Email details - From: ${from}, Subject: ${subject}`);
+      // Extract the email body (plain text or HTML)
+      const bodyPart = msg.data.payload?.parts?.find(
+        (part) => part.mimeType === "text/plain" || part.mimeType === "text/html"
+      );
 
-      // You can add further processing here if necessary, e.g., sending to Discord or marking as read
-      await sendToDiscord({ from, subject, body: "Email content omitted for brevity." });
+      const body = bodyPart?.body?.data
+        ? Buffer.from(bodyPart.body.data, "base64").toString("utf-8")
+        : "No Body Content";
 
+      log.info(`Processing email - From: ${from}, Subject: ${subject}`);
+
+      // Send the email data to Discord with the full body
+      await sendToDiscord({ from, subject, body });
+
+      // Mark the email as read
       await gmail.users.messages.modify({
         userId: "me",
         id: message.id!,
@@ -214,6 +233,7 @@ async function sendToDiscord(emailData: { from: string; subject: string; body: s
     log.error("Failed to send email to Discord.", error);
   }
 }
+
 
 // -------------------- Main Entry Point --------------------
 
