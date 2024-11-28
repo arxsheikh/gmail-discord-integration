@@ -3,24 +3,19 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "dev": "npx prisma generate && ts-node src/index.ts",
-    "start": "npx prisma generate && ts-node src/index.ts",
-    "postinstall": "prisma generate"
-
+    "dev": "ts-node src/index.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "@prisma/client": "^5.22.0",
     "@vercel/node": "^3.2.27",
     "axios": "^1.7.8",
     "express": "^4.21.1",
     "googleapis": "^144.0.0",
     "pg": "^8.13.1",
     "pg-promise": "^11.10.2",
-    "prisma": "^5.22.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.7.2"
   },
