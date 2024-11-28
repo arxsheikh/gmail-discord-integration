@@ -11,7 +11,7 @@ const CREDENTIALS_PATH = path.resolve(__dirname, "credentials.json");
 const PORT = 3000;
 const WEBHOOK_URL = "https://discord.com/api/webhooks/YOUR_WEBHOOK_URL"; // Replace with your Discord webhook URL
 const REFRESH_MAILS_TIME_MS = 60000; // Refresh interval in milliseconds (e.g., 60000ms = 1 minute)
-const URL = `https://gmail-discord-integration.onrender.com/oauth2callback`
+
 // -------------------- Logger --------------------
 const log = {
   info: (message: string) => console.log(`[INFO]: ${message}`),
@@ -29,7 +29,7 @@ async function authorize(): Promise<gmail_v1.Gmail> {
   const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, "utf-8"));
   const { client_id, client_secret, redirect_uris } = credentials.installed;
 
-  const oAuth2Client = new google.auth.OAuth2(client_id, client_secret,URL );
+  const oAuth2Client = new google.auth.OAuth2(client_id, client_secret, `${redirect_uris}/oauth2callback`);
 
   if (fs.existsSync(TOKEN_PATH)) {
     log.info("Using existing token for Gmail API authentication...");
