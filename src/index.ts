@@ -20,7 +20,6 @@ const log = {
 };
 
 // -------------------- Authorization --------------------
-
 /**
  * Initializes and returns an authenticated Gmail API client.
  */
