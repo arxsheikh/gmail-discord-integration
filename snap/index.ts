@@ -1,11 +1,16 @@
 import { gmail_v1, google } from "googleapis";
-import axios from "axios";
+import fs from "fs";
+import path from "path";
 import express from "express";
+import axios from "axios";
 import dotenv from "dotenv";
 
+// Load environment variables
 dotenv.config();
 
+// -------------------- Configuration --------------------
 const SCOPES = ["https://www.googleapis.com/auth/gmail.modify"];
+const TOKEN_PATH = path.resolve(__dirname, "token.json");
 const {
   CLIENT_ID,
   CLIENT_SECRET,
@@ -13,14 +18,14 @@ const {
   WEBHOOK_URL,
   PORT = 3000,
   REFRESH_MAILS_TIME_MS = "60000",
-  JSON_SILO_URL,
 } = process.env;
 
-if (!CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI || !WEBHOOK_URL || !JSON_SILO_URL) {
+if (!CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI || !WEBHOOK_URL) {
   console.error("Missing environment variables. Check your .env file.");
   process.exit(1);
 }
 
+// -------------------- Logger --------------------
 const log = {
   info: (message: string) => console.log(`[INFO]: ${message}`),
   warn: (message: string) => console.warn(`[WARNING]: ${message}`),
@@ -28,55 +33,40 @@ const log = {
     console.error(`[ERROR]: ${message}`, error),
 };
 
-/**
- * Fetches tokens from JSONSilo.
- */
-async function fetchToken(): Promise<any> {
-  try {
-    log.info("Fetching token from JSONSilo...");
-    const response = await axios.get(`${JSON_SILO_URL}`);
-    return response.data;
-  } catch (error) {
-    log.error("Failed to fetch token from JSONSilo.", error);
-    throw error;
-  }
-}
-
-/**
- * Saves tokens to JSONSilo.
- */
-async function saveToken(token: any): Promise<void> {
-  try {
-    log.info("Saving token to JSONSilo...");
-    await axios.put(`${JSON_SILO_URL}`, token);
-    log.info("Token successfully saved to JSONSilo.");
-  } catch (error) {
-    log.error("Failed to save token to JSONSilo.", error);
-    throw error;
-  }
-}
-
+// -------------------- Authorization --------------------
 /**
  * Initializes and returns an authenticated Gmail API client.
  */
 async function authorize(): Promise<gmail_v1.Gmail> {
   log.info("Starting Gmail API authorization...");
-  const oAuth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
+  const oAuth2Client = new google.auth.OAuth2(
+    CLIENT_ID,
+    CLIENT_SECRET,
+    REDIRECT_URI
+  );
 
-  try {
-    const token = await fetchToken();
-    oAuth2Client.setCredentials(token);
+  // Attempt to load the token file if it exists
+  if (fs.existsSync(TOKEN_PATH)) {
+    try {
+      const token = JSON.parse(fs.readFileSync(TOKEN_PATH, "utf-8"));
+      oAuth2Client.setCredentials(token);
 
-    oAuth2Client.on("tokens", async (tokens) => {
-      if (tokens.refresh_token) {
-        await saveToken(tokens);
-        log.info("Refresh token updated in JSONSilo.");
-      }
-    });
+      // Ensure the refresh token is used to obtain a new access token if necessary
+      oAuth2Client.on("tokens", (tokens) => {
+        if (tokens.refresh_token) {
+          fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
+          log.info("Refresh token updated and saved.");
+        }
+      });
 
-    await validateToken(oAuth2Client);
-  } catch (error) {
-    log.error("Token is invalid or missing. Starting authorization process...");
+      // Validate token and attempt an API call to ensure it works
+      await validateToken(oAuth2Client);
+    } catch (error) {
+      log.error("Token file is invalid or expired. Reauthorizing...", error);
+      await startAuthServer(oAuth2Client);
+    }
+  } else {
+    log.warn("No token file found. Starting authorization process...");
     await startAuthServer(oAuth2Client);
   }
 
@@ -88,8 +78,13 @@ async function authorize(): Promise<gmail_v1.Gmail> {
  * Validates the OAuth2 client's token by making a test API request.
  */
 async function validateToken(oAuth2Client: any): Promise<void> {
-  const gmail = google.gmail({ version: "v1", auth: oAuth2Client });
-  await gmail.users.getProfile({ userId: "me" });
+  try {
+    const gmail = google.gmail({ version: "v1", auth: oAuth2Client });
+    await gmail.users.getProfile({ userId: "me" }); // Test API call
+    log.info("Token validation successful.");
+  } catch (error) {
+    throw new Error("Invalid or expired token. Reauthorization required.");
+  }
 }
 
 /**
@@ -103,6 +98,7 @@ async function startAuthServer(oAuth2Client: any): Promise<void> {
       access_type: "offline",
       scope: SCOPES,
     });
+
     log.info(`Generated authorization URL: ${authUrl}`);
     res.send(`
       <h1>Authorize Gmail Access</h1>
@@ -122,9 +118,8 @@ async function startAuthServer(oAuth2Client: any): Promise<void> {
     try {
       const { tokens } = await oAuth2Client.getToken(code);
       oAuth2Client.setCredentials(tokens);
-
-      await saveToken(tokens);
-      log.info("Authorization successful. Tokens saved to JSONSilo.");
+      fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
+      log.info("Authorization successful. Tokens saved to file.");
       res.send("Authorization successful. You can close this window.");
     } catch (error) {
       log.error("Failed to exchange authorization code for tokens.", error);
@@ -137,6 +132,11 @@ async function startAuthServer(oAuth2Client: any): Promise<void> {
   );
 }
 
+// -------------------- Email Processing --------------------
+
+/**
+ * Fetches and processes unread emails.
+ */
 /**
  * Fetches and processes unread emails.
  */
@@ -165,10 +165,21 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       });
 
       const headers = msg.data.payload?.headers || [];
-      const subject =
+      let subject =
         headers.find((header) => header.name === "Subject")?.value || "No Subject";
+
+      // Limit subject to 50 words
+      subject = subject.split(/\s+/).slice(0, 50).join(" ");
+
+      // Skip emails without the word "ALERT" in uppercase in the subject
+      if (!subject.includes("ALERT")) {
+        log.info(`Skipping email - Subject does not contain "ALERT": ${subject}`);
+        continue;
+      }
+
       const from = headers.find((header) => header.name === "From")?.value || "Unknown Sender";
 
+      // Extract the email body (plain text or HTML)
       const bodyPart = msg.data.payload?.parts?.find(
         (part) => part.mimeType === "text/plain" || part.mimeType === "text/html"
       );
@@ -179,8 +190,10 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
 
       log.info(`Processing email - From: ${from}, Subject: ${subject}`);
 
+      // Send the email data to Discord with the full body
       await sendToDiscord({ from, subject, body });
 
+      // Mark the email as read
       await gmail.users.messages.modify({
         userId: "me",
         id: message.id!,
@@ -189,10 +202,15 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
 
       log.info(`Processed and marked email as read: ${subject}`);
     }
-  } catch (error) {
-    log.error("An error occurred while fetching or processing emails.");
+  } catch (error: any) {
+    if (error.message.includes("No access, refresh token, API key or refresh handler callback")) {
+      log.error("Unable to fetch emails: Missing or invalid credentials.");
+    } else {
+      log.error("An error occurred while fetching or processing emails.");
+    }
   }
 }
+
 
 /**
  * Sends email content to Discord using a webhook.
@@ -216,9 +234,9 @@ async function sendToDiscord(emailData: { from: string; subject: string; body: s
   }
 }
 
-/**
- * Main Entry Point
- */
+
+// -------------------- Main Entry Point --------------------
+
 (async function main() {
   try {
     const gmail = await authorize();
