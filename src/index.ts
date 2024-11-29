@@ -203,9 +203,6 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       let subject =
         headers.find((header) => header.name === "Subject")?.value || "No Subject";
 
-      // Limit subject to 50 words
-      subject = subject.split(/\s+/).slice(0, 50).join(" ");
-
       const from =
         headers.find((header) => header.name === "From")?.value || "Unknown Sender";
 
@@ -217,14 +214,19 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
         ? Buffer.from(bodyPart.body.data, "base64").toString("utf-8")
         : "No Body Content";
 
-      if (subject.includes("ALERT")) {
-        log.info(`Processing email - From: ${from}, Subject: ${subject}`);
-        await sendToDiscord({ from, subject, body });
-      } else {
-        log.info(`Skipping email - From: ${from}, Subject: ${subject.slice(0, 50)}...`);
+      // Log for emails being skipped
+      if (!subject.includes("ALERT")) {
+        log.info(`Skipping email - Subject: ${subject.slice(0, 20)}...`);
+        continue; // Skip the email if it doesn't contain "ALERT"
       }
 
-      // Mark the email as read after processing
+      // Log for emails being processed
+      log.info(`Processing email - From: ${from}, Subject: ${subject}`);
+
+      // Send email to Discord
+      await sendToDiscord({ from, subject, body });
+
+      // Mark the email as read
       await gmail.users.messages.modify({
         userId: "me",
         id: message.id!,
@@ -237,6 +239,7 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
     log.error("An error occurred while fetching emails.", error);
   }
 }
+
 
 /**
  * Sends email content to Discord using a webhook.
