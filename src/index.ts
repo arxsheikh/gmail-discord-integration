@@ -177,10 +177,9 @@ async function startAuthServer(oAuth2Client: any): Promise<void> {
 async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
   log.info("Fetching latest unread emails...");
   try {
-    const maxEmails = parseInt(MAX_EMAILS_TO_FETCH);
     const res = await gmail.users.messages.list({
       userId: "me",
-      maxResults: maxEmails,
+      maxResults: 10,
       q: "is:unread",
     });
 
@@ -203,9 +202,18 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       let subject =
         headers.find((header) => header.name === "Subject")?.value || "No Subject";
 
-      const from =
-        headers.find((header) => header.name === "From")?.value || "Unknown Sender";
+      // Limit subject to 50 words
+      subject = subject.split(/\s+/).slice(0, 50).join(" ");
 
+      // Skip emails without the word "ALERT" in uppercase in the subject
+      if (!subject.includes("ALERT")) {
+        log.info(`Skipping email - Subject does not contain "ALERT": ${subject}`);
+        continue;
+      }
+
+      const from = headers.find((header) => header.name === "From")?.value || "Unknown Sender";
+
+      // Extract the email body (plain text or HTML)
       const bodyPart = msg.data.payload?.parts?.find(
         (part) => part.mimeType === "text/plain" || part.mimeType === "text/html"
       );
@@ -214,16 +222,9 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
         ? Buffer.from(bodyPart.body.data, "base64").toString("utf-8")
         : "No Body Content";
 
-      // Log for emails being skipped
-      if (!subject.includes("ALERT")) {
-        log.info(`Skipping email - Subject: ${subject.slice(0, 20)}...`);
-        continue; // Skip the email if it doesn't contain "ALERT"
-      }
-
-      // Log for emails being processed
       log.info(`Processing email - From: ${from}, Subject: ${subject}`);
 
-      // Send email to Discord
+      // Send the email data to Discord with the full body
       await sendToDiscord({ from, subject, body });
 
       // Mark the email as read
@@ -236,10 +237,13 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       log.info(`Processed and marked email as read: ${subject}`);
     }
   } catch (error: any) {
-    log.error("An error occurred while fetching emails.", error);
+    if (error.message.includes("No access, refresh token, API key or refresh handler callback")) {
+      log.error("Unable to fetch emails: Missing or invalid credentials.");
+    } else {
+      log.error("An error occurred while fetching or processing emails.");
+    }
   }
 }
-
 
 /**
  * Sends email content to Discord using a webhook.
