@@ -15,7 +15,8 @@ const {
   REDIRECT_URI,
   WEBHOOK_URL,
   PORT = 3000,
-  REFRESH_MAILS_TIME_MS = "60000",
+  REFRESH_MAILS_TIME_MS = "60000", // Time in milliseconds (default: 60 seconds)
+  MAX_EMAILS_TO_FETCH = "10", // Max emails to fetch (default: 10)
 } = process.env;
 
 if (!CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI || !WEBHOOK_URL) {
@@ -158,9 +159,10 @@ async function startAuthServer(oAuth2Client: any): Promise<void> {
 async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
   log.info("Fetching latest unread emails...");
   try {
+    const maxEmails = parseInt(MAX_EMAILS_TO_FETCH);
     const res = await gmail.users.messages.list({
       userId: "me",
-      maxResults: 10,
+      maxResults: maxEmails,
       q: "is:unread",
     });
 
@@ -197,12 +199,14 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
         ? Buffer.from(bodyPart.body.data, "base64").toString("utf-8")
         : "No Body Content";
 
-      log.info(`Processing email - From: ${from}, Subject: ${subject}`);
+      if (subject.includes("ALERT")) {
+        log.info(`Processing email - From: ${from}, Subject: ${subject}`);
+        await sendToDiscord({ from, subject, body });
+      } else {
+        log.info(`Skipping email - From: ${from}, Subject: ${subject.slice(0, 50)}...`);
+      }
 
-      // Send the email data to Discord with the full body
-      await sendToDiscord({ from, subject, body });
-
-      // Mark the email as read
+      // Mark the email as read after processing
       await gmail.users.messages.modify({
         userId: "me",
         id: message.id!,
@@ -245,6 +249,7 @@ async function sendToDiscord(emailData: { from: string; subject: string; body: s
     const gmail = await authorize();
     await fetchAndProcessEmails(gmail);
 
+    // Set up interval for fetching emails
     setInterval(async () => {
       await fetchAndProcessEmails(gmail);
     }, parseInt(REFRESH_MAILS_TIME_MS));
