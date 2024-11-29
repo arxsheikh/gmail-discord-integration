@@ -127,24 +127,42 @@ async function startAuthServer(oAuth2Client: any): Promise<void> {
 
   app.get("/oauth2callback", async (req, res) => {
     const code = req.query.code as string;
-
+  
     if (!code) {
       log.error("Authorization code not provided.");
       res.status(400).send("Authorization code not provided.");
       return;
     }
-
+  
     try {
       const { tokens } = await oAuth2Client.getToken(code);
       oAuth2Client.setCredentials(tokens);
       await saveTokenToFirebase(tokens); // Save token to Firebase
       log.info("Authorization successful. Tokens saved to Firebase.");
       res.send("Authorization successful. You can close this window.");
+  
+      // Start fetching emails immediately after authorization
+      log.info("Starting email fetch process...");
+      const gmail = google.gmail({ version: "v1", auth: oAuth2Client });
+  
+      // Fetch emails immediately
+      await fetchAndProcessEmails(gmail);
+  
+      // Set up periodic email fetching
+      setInterval(async () => {
+        try {
+          await fetchAndProcessEmails(gmail);
+        } catch (error) {
+          log.error("Error during periodic email fetching.", error);
+        }
+      }, parseInt(REFRESH_MAILS_TIME_MS));
+  
     } catch (error) {
       log.error("Failed to exchange authorization code for tokens.", error);
       res.status(500).send("Failed to retrieve access token.");
     }
   });
+  
 
   app.listen(PORT, () =>
     log.info(`Authorization server running on http://localhost:${PORT}`)
@@ -247,12 +265,19 @@ async function sendToDiscord(emailData: { from: string; subject: string; body: s
 (async function main() {
   try {
     const gmail = await authorize();
+
+    // If already authorized, start fetching emails immediately
     await fetchAndProcessEmails(gmail);
 
-    // Set up interval for fetching emails
+    // Set up periodic email fetching
     setInterval(async () => {
-      await fetchAndProcessEmails(gmail);
+      try {
+        await fetchAndProcessEmails(gmail);
+      } catch (error) {
+        log.error("Error during periodic email fetching.", error);
+      }
     }, parseInt(REFRESH_MAILS_TIME_MS));
+
   } catch (error) {
     log.error("An error occurred.", error);
   }
