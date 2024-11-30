@@ -160,7 +160,7 @@ async function sendToDiscord(emailData: { from: string; subject: string; body: s
     addLog("Sending email to Discord...");
     await axios.post(WEBHOOK_URL!, messagePayload);
   } catch (error) {
-    addLog("Failed to send email to Discord.", "error");
+    addLog("Failed to send email to Discord.");
   }
 }
 
@@ -175,6 +175,21 @@ app.get("/", async (req, res) => {
   } catch (error) {
     const authUrl = generateAuthUrl();
     res.send(`<h1>Authorization Required</h1><p><a href="${authUrl}">Click here to authorize Gmail Access</a></p>`);
+  }
+});
+app.get("/oauth2callback", async (req, res) => {
+  const code = req.query.code as string;
+  if (!code) {
+    res.status(400).send("Authorization code not provided.");
+    return;
+  }
+
+  try {
+    await handleOAuthCallback(code);
+    res.send("Authorization successful. You can close this window.");
+  } catch (error) {
+    addLog("Error during OAuth callback.", "error");
+    res.status(500).send("Failed to authorize.");
   }
 });
 
