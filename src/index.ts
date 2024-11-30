@@ -81,10 +81,31 @@ function generateAuthUrl(): string {
 // Handles the OAuth2 callback to retrieve and save tokens
 async function handleOAuthCallback(code: string) {
   const oAuth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
+  
+  // Exchange the authorization code for tokens
   const { tokens } = await oAuth2Client.getToken(code);
   oAuth2Client.setCredentials(tokens);
+
+  // Save tokens to Firebase for future use
   await saveTokenToFirebase(tokens);
   addLog("Authorization successful. Tokens saved to Firebase.");
+
+  // Initialize Gmail API client with the authorized OAuth2 client
+  const gmail = google.gmail({ version: "v1", auth: oAuth2Client });
+
+  // Start fetching emails immediately
+  addLog("Starting email fetching process...");
+  try {
+    await fetchAndProcessEmails(gmail); // Pass the Gmail client to the function
+    addLog("Initial email fetching completed.");
+
+    // Schedule periodic email fetching
+    setInterval(async () => {
+      await fetchAndProcessEmails(gmail);
+    }, parseInt(REFRESH_MAILS_TIME_MS));
+  } catch (error) {
+    addLog("Error during email fetching process after authorization.", "error");
+  }
 }
 
 // -------------------- Gmail Functions --------------------
