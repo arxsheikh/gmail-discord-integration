@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Logs</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: #f4f4f4;
+    }
+    .log-container {
+      padding: 20px;
+      max-height: 90vh;
+      overflow-y: auto;
+      background: #000;
+      color: #fff;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .log-header {
+      background: #333;
+      color: #fff;
+      padding: 10px;
+      text-align: center;
+      font-size: 20px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="log-header">Live Logs</div>
+  <div class="log-container" id="log-container"></div>
+
+  <script>
+    const logContainer = document.getElementById("log-container");
+
+    async function fetchLogs() {
+      try {
+        const response = await fetch("/logs");
+        const logs = await response.json();
+
+        logContainer.innerHTML = ""; // Clear previous logs
+        logs.forEach((log) => {
+          const logEntry = document.createElement("div");
+          logEntry.textContent = log;
+          logContainer.appendChild(logEntry);
+        });
+
+        // Auto-scroll to the latest log
+        logContainer.scrollTop = logContainer.scrollHeight;
+      } catch (error) {
+        console.error("Failed to fetch logs:", error);
+      }
+    }
+
+    // Poll logs every 5 seconds
+    setInterval(fetchLogs, 5000);
+    fetchLogs(); // Initial fetch
+  </script>
+</body>
+</html>

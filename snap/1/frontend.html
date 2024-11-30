@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Live Logs</title>
+  <script src="https://cdn.socket.io/4.5.1/socket.io.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background-color: #f4f4f4;
+    }
+    .log-container {
+      padding: 20px;
+      max-height: 90vh;
+      overflow-y: auto;
+      background: #000;
+      color: #fff;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .log-container .info {
+      color: #0f0; /* Green for info */
+    }
+    .log-container .warn {
+      color: #ff0; /* Yellow for warning */
+    }
+    .log-container .error {
+      color: #f00; /* Red for error */
+    }
+    .log-header {
+      background: #333;
+      color: #fff;
+      padding: 10px;
+      text-align: center;
+      font-size: 20px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="log-header">Live Logs</div>
+  <div class="log-container" id="log-container"></div>
+
+  <script>
+    const socket = io(); // Connect to the socket.io server
+    const logContainer = document.getElementById("log-container");
+
+    socket.on("log", (logData) => {
+      const logEntry = document.createElement("div");
+
+      // Add class based on log level
+      if (logData.level === "info") logEntry.classList.add("info");
+      if (logData.level === "warn") logEntry.classList.add("warn");
+      if (logData.level === "error") logEntry.classList.add("error");
+
+      logEntry.textContent = logData.message;
+      logContainer.appendChild(logEntry);
+
+      // Auto-scroll to the latest log
+      logContainer.scrollTop = logContainer.scrollHeight;
+    });
+  </script>
+</body>
+</html>
