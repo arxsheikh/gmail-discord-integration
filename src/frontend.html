@@ -5,59 +5,213 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Live Logs</title>
   <style>
+    /* General styling */
     body {
-      font-family: Arial, sans-serif;
+      font-family: "Roboto Mono", monospace;
       margin: 0;
       padding: 0;
-      background-color: #f4f4f4;
+      background-color: #1e1e1e;
+      color: #c7c7c7;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start; /* Align content to the left */
+      padding-left: 10%; /* Add padding for content */
+      min-height: 100vh;
     }
-    .log-container {
-      padding: 20px;
-      max-height: 90vh;
-      overflow-y: auto;
-      background: #000;
-      color: #fff;
-      font-size: 14px;
-      line-height: 1.5;
-    }
+
     .log-header {
-      background: #333;
+      background: #292929;
       color: #fff;
-      padding: 10px;
-      text-align: center;
+      padding: 15px;
       font-size: 20px;
       font-weight: bold;
+      width: 100%;
+      border-bottom: 2px solid #444;
+      text-align: left; /* Align title to the left */
+    }
+
+    .controls {
+      display: flex;
+      justify-content: flex-start; /* Align button to the left */
+      margin: 15px 0;
+      width: 100%;
+    }
+
+    .sort-button {
+      padding: 10px 20px;
+      font-size: 14px;
+      font-weight: bold;
+      color: #fff;
+      background: #3a3a3a;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      transition: background 0.3s, color 0.3s;
+      box-shadow: 0 3px 6px rgba(0, 0, 0, 0.4);
+    }
+
+    .sort-button:hover {
+      background: #444;
+      color: #c7c7c7;
+    }
+
+    .sort-button:active {
+      background: #555;
+    }
+
+    .log-container {
+      width: 100%;
+      max-width: 1200px;
+      padding: 15px;
+      background: #1a1a1a;
+      border-radius: 10px;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.6);
+      margin-top: 20px;
+    }
+
+    .log-entry {
+      padding: 10px;
+      margin: 8px 0;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 400;
+      text-align: left;
+      transition: background-color 0.2s;
+      background: #222;
+      display: flex; /* Use flexbox for alignment */
+      align-items: center; /* Vertically align content */
+      gap: 10px; /* Add spacing between items */
+      overflow: hidden; /* Ensure no weird line breaks */
+      white-space: nowrap; /* Prevent line breaks */
+    }
+
+    .log-entry:hover {
+      background-color: #292929;
+    }
+
+    .log-time {
+      color: #6c757d;
+      font-size: 12px;
+      flex-shrink: 0; /* Prevent time from shrinking */
+    }
+
+    .log-level {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 3px;
+      font-size: 12px;
+      text-transform: uppercase;
+      font-weight: bold;
+      flex-shrink: 0; /* Prevent log level from shrinking */
+    }
+
+    .log-level.info {
+      background-color: #1e88e5;
+      color: #fff;
+    }
+
+    .log-level.warn {
+      background-color: #f9a825;
+      color: #000;
+    }
+
+    .log-level.error {
+      background-color: #e53935;
+      color: #fff;
+    }
+
+    .log-message {
+      flex-grow: 1; /* Allow the message to take available space */
+      overflow: hidden; /* Prevent content overflow */
+      text-overflow: ellipsis; /* Add ellipsis for long messages */
+      white-space: nowrap; /* Prevent line breaks */
     }
   </style>
 </head>
 <body>
   <div class="log-header">Live Logs</div>
+  <div class="controls">
+    <button id="sort-button" class="sort-button">Sort: Latest First</button>
+  </div>
   <div class="log-container" id="log-container"></div>
 
   <script>
     const logContainer = document.getElementById("log-container");
+    const sortButton = document.getElementById("sort-button");
+
+    let logs = [];
+    let isDescending = true; // Default order is latest first
 
     async function fetchLogs() {
       try {
         const response = await fetch("/logs");
-        const logs = await response.json();
-
-        logContainer.innerHTML = ""; // Clear previous logs
-        logs.forEach((log) => {
-          const logEntry = document.createElement("div");
-          logEntry.textContent = log;
-          logContainer.appendChild(logEntry);
-        });
-
-        // Auto-scroll to the latest log
-        logContainer.scrollTop = logContainer.scrollHeight;
+        logs = await response.json();
+        renderLogs();
       } catch (error) {
         console.error("Failed to fetch logs:", error);
       }
     }
-    // Poll logs every 5 seconds
+
+    function formatTimestampToStandardTime(timestamp) {
+      const date = new Date(timestamp);
+      const hours = date.getHours();
+      const minutes = date.getMinutes().toString().padStart(2, "0");
+      const seconds = date.getSeconds().toString().padStart(2, "0");
+      const ampm = hours >= 12 ? "PM" : "AM";
+      const standardHours = hours % 12 || 12; // Convert 0 to 12 for AM/PM format
+      return `${standardHours}:${minutes}:${seconds} ${ampm}`;
+    }
+
+    function renderLogs() {
+      logContainer.innerHTML = ""; // Clear previous logs
+      const sortedLogs = isDescending ? [...logs].reverse() : logs;
+      sortedLogs.forEach((log) => {
+        const logEntry = document.createElement("div");
+        logEntry.classList.add("log-entry");
+
+        // Extract timestamp and log message
+        const timestampRegex = /\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)\]/;
+        const match = log.match(timestampRegex);
+        const timestampPart = match ? match[1] : null;
+        const messagePart = log.replace(timestampRegex, "").trim();
+
+        // Format timestamp to standard time
+        const formattedTime = timestampPart ? formatTimestampToStandardTime(timestampPart) : "Unknown time";
+
+        // Determine log level and style
+        const logLevel = log.includes("[INFO]") ? "info" : log.includes("[WARN]") ? "warn" : "error";
+
+        // Create elements
+        const timeTag = document.createElement("span");
+        timeTag.className = "log-time";
+        timeTag.textContent = formattedTime;
+
+        const levelTag = document.createElement("span");
+        levelTag.className = `log-level ${logLevel}`;
+        levelTag.textContent = logLevel.toUpperCase();
+
+        const messageTag = document.createElement("span");
+        messageTag.className = "log-message";
+        messageTag.textContent = messagePart;
+
+        logEntry.appendChild(timeTag);
+        logEntry.appendChild(levelTag);
+        logEntry.appendChild(messageTag);
+
+        logContainer.appendChild(logEntry);
+      });
+    }
+
+    // Toggle sort order and re-render logs
+    sortButton.addEventListener("click", () => {
+      isDescending = !isDescending;
+      sortButton.textContent = `Sort: ${isDescending ? "Latest First" : "Oldest First"}`;
+      renderLogs();
+    });
+
+    // Initial fetch and periodic updates
+    fetchLogs();
     setInterval(fetchLogs, 5000);
-    fetchLogs(); // Initial fetch
   </script>
 </body>
 </html>

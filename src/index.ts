@@ -29,7 +29,7 @@ function addLog(message: string, level: "info" | "warn" | "error" = "info") {
   const logEntry = `[${level.toUpperCase()}] [${new Date().toISOString()}]: ${message}`;
   console.log(logEntry);
   logs.push(logEntry);
-  if (logs.length > 100) logs.shift(); // Keep only the last 100 logs
+  if (logs.length > 20) logs.shift(); // Keep only the last 20 logs
 }
 
 // -------------------- Firebase Token Management --------------------
@@ -110,7 +110,8 @@ async function handleOAuthCallback(code: string) {
 
 // -------------------- Gmail Functions --------------------
 async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
-  addLog("Fetching latest unread emails...");
+  addLog("📬 Starting to fetch and process unread emails...");
+
   try {
     const res = await gmail.users.messages.list({
       userId: "me",
@@ -119,14 +120,16 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
     });
 
     const messages = res.data.messages || [];
-    addLog(`Number of unread emails found: ${messages.length}`);
+    addLog(`✅ Total unread emails found: ${messages.length}`);
+
     if (messages.length === 0) {
-      addLog("No unread emails found.");
+      addLog("ℹ️ No unread emails found. Exiting process.");
       return;
     }
 
     for (const [index, message] of messages.entries()) {
-      addLog(`Processing email ${index + 1} of ${messages.length}...`);
+      addLog(`🔍 Processing email ${index + 1} of ${messages.length}...`);
+
       const msg = await gmail.users.messages.get({
         userId: "me",
         id: message.id!,
@@ -136,14 +139,14 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       const headers = msg.data.payload?.headers || [];
       const subject =
         headers.find((header) => header.name === "Subject")?.value || "No Subject";
+      const from =
+        headers.find((header) => header.name === "From")?.value || "Unknown Sender";
 
       if (!subject.includes("ALERT")) {
-        addLog(`Skipping email - Subject does not contain "ALERT": ${subject}`);
+        addLog(`🚫 Skipping email ${index + 1} - Subject does not contain "ALERT": ${subject}`);
         continue;
       }
 
-      const from =
-        headers.find((header) => header.name === "From")?.value || "Unknown Sender";
       const bodyPart = msg.data.payload?.parts?.find(
         (part) => part.mimeType === "text/plain" || part.mimeType === "text/html"
       );
@@ -151,7 +154,7 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
         ? Buffer.from(bodyPart.body.data, "base64").toString("utf-8")
         : "No Body Content";
 
-      addLog(`Sending email - From: ${from}, Subject: ${subject}`);
+      addLog(`📤 Sending email to Discord - From: ${from}, Subject: ${subject}`);
       await sendToDiscord({ from, subject, body });
 
       await gmail.users.messages.modify({
@@ -160,12 +163,25 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
         requestBody: { removeLabelIds: ["UNREAD"] },
       });
 
-      addLog(`Email processed and marked as read: ${subject}`);
+      addLog(`✅ Email processed and marked as read: ${subject}`);
     }
+
+    const currentTime = new Date();
+
+
+    const refreshTime = new Date(currentTime.getTime() + parseInt(REFRESH_MAILS_TIME_MS));
+
+    addLog("🎉 Email processing completed successfully!");
+    addLog(
+      `⌛ Next email check will be at ${refreshTime.toLocaleTimeString()} (${refreshTime.toLocaleDateString()}). Current time: ${currentTime.toLocaleTimeString()}`
+    );
+
   } catch (error) {
-    addLog("Error during email fetching.", "error");
+    addLog(`❌ Error during email fetching`, "error");
   }
 }
+
+
 
 async function sendToDiscord(emailData: { from: string; subject: string; body: string }): Promise<void> {
   try {
@@ -191,13 +207,24 @@ const app = express();
 // Routes for Authorization and Logs
 app.get("/", async (req, res) => {
   try {
-    await authorize();
-    res.send("<h1>Welcome to the Email Fetcher Service</h1><p>Authorization successful. Gmail API ready to use.</p>");
+    const gmail = await authorize();
+    addLog("Authorization successful. Initializing email fetch process...");
+
+    setInterval(async () => {
+      await fetchAndProcessEmails(gmail);
+    }, parseInt(REFRESH_MAILS_TIME_MS));
+
+    res.send(
+      "<h1>Welcome to the Email Fetcher Service</h1><p>Authorization successful. Email fetching in progress.</p>"
+    );
   } catch (error) {
     const authUrl = generateAuthUrl();
-    res.send(`<h1>Authorization Required</h1><p><a href="${authUrl}">Click here to authorize Gmail Access</a></p>`);
+    res.send(
+      `<h1>Authorization Required</h1><p><a href="${authUrl}">Click here to authorize Gmail Access</a></p>`
+    );
   }
 });
+
 app.get("/oauth2callback", async (req, res) => {
   const code = req.query.code as string;
   if (!code) {
