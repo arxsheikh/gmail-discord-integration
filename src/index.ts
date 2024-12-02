@@ -197,7 +197,7 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
         addLog(
           `🚫 Skipping email ${
             index + 1
-          } - Subject does not contain "Alert4524updatchecing": ${subject}`,
+          } - Subject does not contain "Alert": ${subject}`,
         );
         continue;
       }
@@ -213,7 +213,7 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       addLog(
         `📤 Sending email to Discord - From: ${from}, Subject: ${subject}`,
       );
-      await sendToDiscord({ from, subject, body });
+      await sendToDiscord({ subject});
 
       await gmail.users.messages.modify({
         userId: "me",
@@ -252,30 +252,21 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
 }
 
 
-async function sendToDiscord(
-  emailData: { from: string; subject: string; body: string },
-): Promise<void> {
+async function sendToDiscord(emailData: { subject: string; }): Promise<void> {
   try {
     const messagePayload = {
-      // Place the URL here to force a preview
-      content: "https://www.tradingview.com/chart/FWOGUSDT/RifzEkxn-FWOG/",
-      embeds: [
-        {
-          title: emailData.subject,
-          description: `${emailData.body}\n\n[Click here to view chart](https://www.tradingview.com/chart/FWOGUSDT/RifzEkxn-FWOG/)`,
-          fields: [{ name: "From", value: emailData.from }],
-          color: 3066993, // Optional: Set a color for the embed
-        },
-      ],
+      // Include @everyone and the subject as the content
+      content: `@everyone ${emailData.subject}`, // Dynamically takes the subject with the URL
     };
 
-    addLog("Sending email to Discord...");
-    await axios.post(WEBHOOK_URL!, messagePayload);
+    addLog("Sending message to Discord...");
+    await axios.post(WEBHOOK_URL!, messagePayload); // Ensure WEBHOOK_URL is defined and valid
+    addLog("Message successfully sent to Discord.");
   } catch (error) {
-    addLog("Failed to send email to Discord.");
-    console.error(error);
+    addLog("Failed to send message to Discord.");
   }
 }
+
 
 // -------------------- Main Server Setup --------------------
 const app = express();
