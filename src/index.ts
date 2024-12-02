@@ -2,7 +2,7 @@ import { gmail_v1, google } from "googleapis";
 import express from "express";
 import axios from "axios";
 import dotenv from "dotenv";
-import { database, ref, set, get, child } from "./firebase";
+import { child, database, get, ref, set } from "./firebase";
 
 // Load environment variables
 dotenv.config();
@@ -26,7 +26,9 @@ if (!CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI || !WEBHOOK_URL) {
 // -------------------- Logger --------------------
 const logs: string[] = []; // In-memory log storage
 function addLog(message: string, level: "info" | "warn" | "error" = "info") {
-  const logEntry = `[${level.toUpperCase()}] [${new Date().toISOString()}]: ${message}`;
+  const logEntry = `[${level.toUpperCase()}] [${
+    new Date().toISOString()
+  }]: ${message}`;
   console.log(logEntry);
   logs.push(logEntry);
   if (logs.length > 20) logs.shift(); // Keep only the last 20 logs
@@ -54,11 +56,28 @@ async function loadTokenFromFirebase() {
 // -------------------- Gmail Authorization --------------------
 async function authorize(): Promise<gmail_v1.Gmail> {
   addLog("Authorizing Gmail API...");
-  const oAuth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
+  const oAuth2Client = new google.auth.OAuth2(
+    CLIENT_ID,
+    CLIENT_SECRET,
+    REDIRECT_URI,
+  );
 
   const token = await loadTokenFromFirebase();
   if (token) {
     oAuth2Client.setCredentials(token);
+
+    // Automatically refresh token if it has expired
+    oAuth2Client.on("tokens", async (newTokens) => {
+      if (newTokens.refresh_token) {
+        addLog("New refresh token detected. Saving to Firebase...");
+      }
+      await saveTokenToFirebase({ ...token, ...newTokens });
+      addLog("Access token refreshed and saved.");
+    });
+
+    // Check and refresh token if needed
+    await ensureValidAccessToken(oAuth2Client);
+
     addLog("Token successfully set to OAuth2 client.");
   } else {
     throw new Error("Unauthorized: No token found.");
@@ -67,9 +86,35 @@ async function authorize(): Promise<gmail_v1.Gmail> {
   return google.gmail({ version: "v1", auth: oAuth2Client });
 }
 
+// Helper to refresh token if needed
+async function ensureValidAccessToken(oAuth2Client: any): Promise<void> {
+  try {
+    const tokenInfo = await oAuth2Client.getAccessToken();
+    const expiryDate = tokenInfo.res?.data?.expiry_date;
+
+    if (expiryDate && Date.now() > expiryDate) {
+      addLog("Access token expired. Refreshing...");
+      const refreshedTokens = await oAuth2Client.refreshAccessToken();
+      oAuth2Client.setCredentials(refreshedTokens.credentials);
+      await saveTokenToFirebase(refreshedTokens.credentials);
+      addLog("Access token refreshed and saved.");
+    }
+  } catch (error) {
+    addLog(
+      "Failed to refresh access token. Reauthorization may be needed.",
+      "error",
+    );
+    throw error;
+  }
+}
+
 // Generates the Google OAuth URL for authorization
 function generateAuthUrl(): string {
-  const oAuth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
+  const oAuth2Client = new google.auth.OAuth2(
+    CLIENT_ID,
+    CLIENT_SECRET,
+    REDIRECT_URI,
+  );
   const authUrl = oAuth2Client.generateAuthUrl({
     access_type: "offline",
     scope: SCOPES,
@@ -80,8 +125,12 @@ function generateAuthUrl(): string {
 
 // Handles the OAuth2 callback to retrieve and save tokens
 async function handleOAuthCallback(code: string) {
-  const oAuth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
-  
+  const oAuth2Client = new google.auth.OAuth2(
+    CLIENT_ID,
+    CLIENT_SECRET,
+    REDIRECT_URI,
+  );
+
   // Exchange the authorization code for tokens
   const { tokens } = await oAuth2Client.getToken(code);
   oAuth2Client.setCredentials(tokens);
@@ -109,6 +158,7 @@ async function handleOAuthCallback(code: string) {
 }
 
 // -------------------- Gmail Functions --------------------
+
 async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
   addLog("📬 Starting to fetch and process unread emails...");
 
@@ -137,24 +187,32 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       });
 
       const headers = msg.data.payload?.headers || [];
-      const subject =
-        headers.find((header) => header.name === "Subject")?.value || "No Subject";
-      const from =
-        headers.find((header) => header.name === "From")?.value || "Unknown Sender";
+      const subject = headers.find((header) =>
+        header.name === "Subject"
+      )?.value || "No Subject";
+      const from = headers.find((header) => header.name === "From")?.value ||
+        "Unknown Sender";
 
-      if (!subject.includes("ALERT")) {
-        addLog(`🚫 Skipping email ${index + 1} - Subject does not contain "ALERT": ${subject}`);
+      if (!subject.includes("Alert")) {
+        addLog(
+          `🚫 Skipping email ${
+            index + 1
+          } - Subject does not contain "Alert": ${subject}`,
+        );
         continue;
       }
 
       const bodyPart = msg.data.payload?.parts?.find(
-        (part) => part.mimeType === "text/plain" || part.mimeType === "text/html"
+        (part) =>
+          part.mimeType === "text/plain" || part.mimeType === "text/html",
       );
       const body = bodyPart?.body?.data
         ? Buffer.from(bodyPart.body.data, "base64").toString("utf-8")
         : "No Body Content";
 
-      addLog(`📤 Sending email to Discord - From: ${from}, Subject: ${subject}`);
+      addLog(
+        `📤 Sending email to Discord - From: ${from}, Subject: ${subject}`,
+      );
       await sendToDiscord({ from, subject, body });
 
       await gmail.users.messages.modify({
@@ -167,37 +225,55 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
     }
 
     const currentTime = new Date();
-
-
-    const refreshTime = new Date(currentTime.getTime() + parseInt(REFRESH_MAILS_TIME_MS));
+    const refreshTime = new Date(
+      currentTime.getTime() + parseInt(REFRESH_MAILS_TIME_MS),
+    );
 
     addLog("🎉 Email processing completed successfully!");
     addLog(
-      `⌛ Next email check will be at ${refreshTime.toLocaleTimeString()} (${refreshTime.toLocaleDateString()}). Current time: ${currentTime.toLocaleTimeString()}`
+      `⌛ Next email check will be at ${refreshTime.toLocaleTimeString()} (${refreshTime.toLocaleDateString()}). Current time: ${currentTime.toLocaleTimeString()}`,
     );
-
-  } catch (error) {
-    addLog(`❌ Error during email fetching`, "error");
+  } catch (error: any) {
+    if (error.response?.status === 401) {
+      addLog("Unauthorized error. Attempting to refresh token...", "error");
+      const oAuth2Client = new google.auth.OAuth2(
+        CLIENT_ID,
+        CLIENT_SECRET,
+        REDIRECT_URI,
+      );
+      const refreshedTokens = await oAuth2Client.refreshAccessToken();
+      oAuth2Client.setCredentials(refreshedTokens.credentials);
+      await saveTokenToFirebase(refreshedTokens.credentials);
+      addLog("Access token refreshed and saved.");
+    } else {
+      addLog(`❌ Error during email fetching: ${error.message}`, "error");
+    }
   }
 }
 
 
-
-async function sendToDiscord(emailData: { from: string; subject: string; body: string }): Promise<void> {
+async function sendToDiscord(
+  emailData: { from: string; subject: string; body: string },
+): Promise<void> {
   try {
     const messagePayload = {
+      // Place the URL here to force a preview
+      content: "https://www.tradingview.com/chart/FWOGUSDT/RifzEkxn-FWOG/",
       embeds: [
         {
           title: emailData.subject,
-          description: emailData.body,
+          description: `${emailData.body}\n\n[Click here to view chart](https://www.tradingview.com/chart/FWOGUSDT/RifzEkxn-FWOG/)`,
           fields: [{ name: "From", value: emailData.from }],
+          color: 3066993, // Optional: Set a color for the embed
         },
       ],
     };
+
     addLog("Sending email to Discord...");
     await axios.post(WEBHOOK_URL!, messagePayload);
   } catch (error) {
     addLog("Failed to send email to Discord.");
+    console.error(error);
   }
 }
 
@@ -215,12 +291,12 @@ app.get("/", async (req, res) => {
     }, parseInt(REFRESH_MAILS_TIME_MS));
 
     res.send(
-      "<h1>Welcome to the Email Fetcher Service</h1><p>Authorization successful. Email fetching in progress.</p>"
+      "<h1>Welcome to the Email Fetcher Service</h1><p>Authorization successful. Email fetching in progress.</p>",
     );
   } catch (error) {
     const authUrl = generateAuthUrl();
     res.send(
-      `<h1>Authorization Required</h1><p><a href="${authUrl}">Click here to authorize Gmail Access</a></p>`
+      `<h1>Authorization Required</h1><p><a href="${authUrl}">Click here to authorize Gmail Access</a></p>`,
     );
   }
 });
@@ -265,6 +341,9 @@ app.listen(PORT, async () => {
       await fetchAndProcessEmails(gmail);
     }, parseInt(REFRESH_MAILS_TIME_MS));
   } catch (error) {
-    addLog("Gmail API not yet authorized. Visit the /authorize endpoint to authorize.", "warn");
+    addLog(
+      "Gmail API not yet authorized. Visit the /authorize endpoint to authorize.",
+      "warn",
+    );
   }
 });
