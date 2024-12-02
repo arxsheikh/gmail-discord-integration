@@ -36,7 +36,6 @@ function addLog(message: string, level: "info" | "warn" | "error" = "info") {
 
 // -------------------- Firebase Token Management --------------------
 async function saveTokenToFirebase(tokens: any) {
-  addLog(`Saving tokens to Firebase: ${JSON.stringify(tokens)}`);
   const dbRef = ref(database, "gmail-token");
   await set(dbRef, tokens);
   addLog("Token saved to Firebase.");
@@ -46,7 +45,7 @@ async function loadTokenFromFirebase() {
   const dbRef = ref(database);
   const snapshot = await get(child(dbRef, "gmail-token"));
   if (snapshot.exists()) {
-    addLog(`Loaded token from Firebase: ${JSON.stringify(snapshot.val())}`);
+    addLog("Token loaded from Firebase.");
     return snapshot.val();
   } else {
     addLog("No token found in Firebase.", "warn");
@@ -67,16 +66,19 @@ async function authorize(): Promise<gmail_v1.Gmail> {
   if (token) {
     oAuth2Client.setCredentials(token);
 
-    // Automatically refresh token when new tokens are issued
+    // Automatically refresh token if it has expired
     oAuth2Client.on("tokens", async (newTokens) => {
+      if (newTokens.refresh_token) {
+        addLog("New refresh token detected. Saving to Firebase...");
+      }
       await saveTokenToFirebase({ ...token, ...newTokens });
-      addLog("Tokens updated and saved to Firebase.");
+      addLog("Access token refreshed and saved.");
     });
 
-    // Refresh access token if expired
+    // Check and refresh token if needed
     await ensureValidAccessToken(oAuth2Client);
 
-    addLog("OAuth2 client ready with refreshed tokens.");
+    addLog("Token successfully set to OAuth2 client.");
   } else {
     throw new Error("Unauthorized: No token found.");
   }
@@ -84,65 +86,39 @@ async function authorize(): Promise<gmail_v1.Gmail> {
   return google.gmail({ version: "v1", auth: oAuth2Client });
 }
 
-async function refreshAccessToken(oAuth2Client: any): Promise<void> {
-  const token = await loadTokenFromFirebase();
-
-  if (!token?.refresh_token) {
-    addLog(
-      "No refresh token available. Reauthorization is required.",
-      "error",
-    );
-    throw new Error("No refresh token available. Cannot refresh access token.");
-  }
-
-  try {
-    const refreshedTokens = await oAuth2Client.refreshAccessToken();
-    oAuth2Client.setCredentials(refreshedTokens.credentials);
-
-    // Save refreshed tokens to Firebase
-    await saveTokenToFirebase(refreshedTokens.credentials);
-    addLog("Access token refreshed and saved to Firebase.");
-  } catch (error) {
-    addLog(
-      "Failed to refresh access token. Manual reauthorization may be required.",
-      "error",
-    );
-    throw error;
-  }
-}
-
+// Helper to refresh token if needed
 async function ensureValidAccessToken(oAuth2Client: any): Promise<void> {
   try {
     const tokenInfo = await oAuth2Client.getAccessToken();
-    const expiryDate = tokenInfo?.res?.data?.expiry_date;
+    const expiryDate = tokenInfo.res?.data?.expiry_date;
 
-    if (!expiryDate || Date.now() > expiryDate) {
+    if (expiryDate && Date.now() > expiryDate) {
       addLog("Access token expired. Refreshing...");
-      await refreshAccessToken(oAuth2Client);
+      const refreshedTokens = await oAuth2Client.refreshAccessToken();
+      oAuth2Client.setCredentials(refreshedTokens.credentials);
+      await saveTokenToFirebase(refreshedTokens.credentials);
+      addLog("Access token refreshed and saved.");
     }
   } catch (error) {
     addLog(
-      "Error validating or refreshing access token. Reauthorization may be required.",
+      "Failed to refresh access token. Reauthorization may be needed.",
       "error",
     );
     throw error;
   }
 }
 
-// Generates the Google OAuth URL
+// Generates the Google OAuth URL for authorization
 function generateAuthUrl(): string {
   const oAuth2Client = new google.auth.OAuth2(
     CLIENT_ID,
     CLIENT_SECRET,
     REDIRECT_URI,
   );
-
   const authUrl = oAuth2Client.generateAuthUrl({
     access_type: "offline",
-    prompt: "consent",
     scope: SCOPES,
   });
-
   addLog(`Generated authorization URL: ${authUrl}`);
   return authUrl;
 }
@@ -221,7 +197,7 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
         addLog(
           `🚫 Skipping email ${
             index + 1
-          } - Subject does not contain "Alert ...z:": ${subject}`,
+          } - Subject does not contain "Alert4524updatchecing": ${subject}`,
         );
         continue;
       }
@@ -263,47 +239,41 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       const oAuth2Client = new google.auth.OAuth2(
         CLIENT_ID,
         CLIENT_SECRET,
-        REDIRECT_URI
+        REDIRECT_URI,
       );
-      await refreshAccessToken(oAuth2Client);
+      const refreshedTokens = await oAuth2Client.refreshAccessToken();
+      oAuth2Client.setCredentials(refreshedTokens.credentials);
+      await saveTokenToFirebase(refreshedTokens.credentials);
+      addLog("Access token refreshed and saved.");
     } else {
       addLog(`❌ Error during email fetching: ${error.message}`, "error");
     }
   }
 }
 
+
 async function sendToDiscord(
   emailData: { from: string; subject: string; body: string },
 ): Promise<void> {
   try {
-    const { from, subject, body } = emailData;
-
-    // Message payload for Discord webhook
     const messagePayload = {
-      content: "https://www.tradingview.com/chart/FWOGUSDT/RifzEkxn-FWOG/", // URL for preview
+      // Place the URL here to force a preview
+      content: "https://www.tradingview.com/chart/FWOGUSDT/RifzEkxn-FWOG/",
       embeds: [
         {
-          title: subject || "No Subject Provided", // Fallback for missing subject
-          description: body
-            ? `${body}\n\n[Click here to view chart](https://www.tradingview.com/chart/FWOGUSDT/RifzEkxn-FWOG/)`
-            : "No body content provided.", // Fallback for missing body
-          fields: from ? [{ name: "From", value: from }] : undefined, // Include 'From' field only if provided
-          color: 3066993, // Embed color
+          title: emailData.subject,
+          description: `${emailData.body}\n\n[Click here to view chart](https://www.tradingview.com/chart/FWOGUSDT/RifzEkxn-FWOG/)`,
+          fields: [{ name: "From", value: emailData.from }],
+          color: 3066993, // Optional: Set a color for the embed
         },
       ],
     };
 
-    // Log message before sending
     addLog("Sending email to Discord...");
-
-    // Send message to Discord webhook
     await axios.post(WEBHOOK_URL!, messagePayload);
-
-    // Log success
-    addLog("Email successfully sent to Discord.");
   } catch (error) {
-    // Log failure with error details
     addLog("Failed to send email to Discord.");
+    console.error(error);
   }
 }
 
