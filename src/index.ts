@@ -66,25 +66,26 @@ async function authorize(): Promise<gmail_v1.Gmail> {
   if (token) {
     oAuth2Client.setCredentials(token);
 
-    // Automatically refresh token if it has expired
+    // Automatically handle refresh tokens
     oAuth2Client.on("tokens", async (newTokens) => {
       if (newTokens.refresh_token) {
         addLog("New refresh token detected. Saving to Firebase...");
       }
       await saveTokenToFirebase({ ...token, ...newTokens });
-      addLog("Access token refreshed and saved.");
+      addLog("Tokens updated and saved.");
     });
 
-    // Check and refresh token if needed
+    // Refresh access token if expired
     await ensureValidAccessToken(oAuth2Client);
 
-    addLog("Token successfully set to OAuth2 client.");
+    addLog("OAuth2 client is ready with refreshed tokens.");
   } else {
     throw new Error("Unauthorized: No token found.");
   }
 
   return google.gmail({ version: "v1", auth: oAuth2Client });
 }
+
 
 async function refreshAccessToken(oAuth2Client: any): Promise<void> {
   try {
@@ -106,20 +107,21 @@ async function refreshAccessToken(oAuth2Client: any): Promise<void> {
 async function ensureValidAccessToken(oAuth2Client: any): Promise<void> {
   try {
     const tokenInfo = await oAuth2Client.getAccessToken();
-    const expiryDate = tokenInfo.res?.data?.expiry_date;
+    const expiryDate = tokenInfo?.res?.data?.expiry_date;
 
-    if (expiryDate && Date.now() > expiryDate) {
+    if (!expiryDate || Date.now() > expiryDate) {
       addLog("Access token expired. Refreshing...");
       await refreshAccessToken(oAuth2Client);
     }
   } catch (error) {
     addLog(
-      "Failed to validate or refresh access token. Reauthorization may be required.",
+      "Error validating or refreshing access token. Reauthorization may be needed.",
       "error"
     );
     throw error;
   }
 }
+
 
 
 // Generates the Google OAuth URL for authorization
@@ -248,18 +250,20 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       `⌛ Next email check will be at ${refreshTime.toLocaleTimeString()} (${refreshTime.toLocaleDateString()}). Current time: ${currentTime.toLocaleTimeString()}`,
     );
   } catch (error: any) {
+    if (error.response?.status === 401) {
+      addLog("Unauthorized error. Attempting to refresh token...", "error");
       const oAuth2Client = new google.auth.OAuth2(
         CLIENT_ID,
         CLIENT_SECRET,
-        REDIRECT_URI,
+        REDIRECT_URI
       );
-      if (error.response?.status === 401) {
-        addLog("Unauthorized error. Attempting to refresh token...", "error");
-        await refreshAccessToken(oAuth2Client);
-      } else {
-        addLog(`❌ Error during email fetching: ${error.message}`, "error");
-      }
-    
+      await refreshAccessToken(oAuth2Client);
+
+      // Retry after refreshing the token
+      await fetchAndProcessEmails(gmail);
+    } else {
+      addLog(`❌ Error during email fetching: ${error.message}`, "error");
+    }
   }
 }
 
