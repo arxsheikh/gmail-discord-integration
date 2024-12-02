@@ -246,7 +246,15 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       await saveTokenToFirebase(refreshedTokens.credentials);
       addLog("Access token refreshed and saved.");
     } else {
-      addLog(`❌ Error during email fetching: ${error.message}`, "error");
+      const oAuth2Client = new google.auth.OAuth2(
+        CLIENT_ID,
+        CLIENT_SECRET,
+        REDIRECT_URI,
+      );
+      const refreshedTokens = await oAuth2Client.refreshAccessToken();
+      oAuth2Client.setCredentials(refreshedTokens.credentials);
+      await saveTokenToFirebase(refreshedTokens.credentials);
+      addLog("Access token refreshed and saved.");
     }
   }
 }
