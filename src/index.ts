@@ -59,7 +59,7 @@ async function authorize(): Promise<gmail_v1.Gmail> {
   const oAuth2Client = new google.auth.OAuth2(
     CLIENT_ID,
     CLIENT_SECRET,
-    REDIRECT_URI,
+    REDIRECT_URI
   );
 
   const token = await loadTokenFromFirebase();
@@ -86,7 +86,23 @@ async function authorize(): Promise<gmail_v1.Gmail> {
   return google.gmail({ version: "v1", auth: oAuth2Client });
 }
 
-// Helper to refresh token if needed
+async function refreshAccessToken(oAuth2Client: any): Promise<void> {
+  try {
+    const refreshedTokens = await oAuth2Client.refreshAccessToken();
+    oAuth2Client.setCredentials(refreshedTokens.credentials);
+
+    // Save the refreshed tokens to Firebase
+    await saveTokenToFirebase(refreshedTokens.credentials);
+    addLog("Access token refreshed successfully and saved to Firebase.");
+  } catch (error) {
+    addLog(
+      "Failed to refresh access token. Reauthorization may be needed.",
+      "error"
+    );
+    throw error;
+  }
+}
+
 async function ensureValidAccessToken(oAuth2Client: any): Promise<void> {
   try {
     const tokenInfo = await oAuth2Client.getAccessToken();
@@ -94,19 +110,17 @@ async function ensureValidAccessToken(oAuth2Client: any): Promise<void> {
 
     if (expiryDate && Date.now() > expiryDate) {
       addLog("Access token expired. Refreshing...");
-      const refreshedTokens = await oAuth2Client.refreshAccessToken();
-      oAuth2Client.setCredentials(refreshedTokens.credentials);
-      await saveTokenToFirebase(refreshedTokens.credentials);
-      addLog("Access token refreshed and saved.");
+      await refreshAccessToken(oAuth2Client);
     }
   } catch (error) {
     addLog(
-      "Failed to refresh access token. Reauthorization may be needed.",
-      "error",
+      "Failed to validate or refresh access token. Reauthorization may be required.",
+      "error"
     );
     throw error;
   }
 }
+
 
 // Generates the Google OAuth URL for authorization
 function generateAuthUrl(): string {
@@ -197,7 +211,7 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
         addLog(
           `🚫 Skipping email ${
             index + 1
-          } - Subject does not contain "Alert ...z": ${subject}`,
+          } - Subject does not contain "Alert ...z:": ${subject}`,
         );
         continue;
       }
@@ -234,28 +248,18 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       `⌛ Next email check will be at ${refreshTime.toLocaleTimeString()} (${refreshTime.toLocaleDateString()}). Current time: ${currentTime.toLocaleTimeString()}`,
     );
   } catch (error: any) {
-    if (error.response?.status === 401) {
-      addLog("Unauthorized error. Attempting to refresh token...", "error");
       const oAuth2Client = new google.auth.OAuth2(
         CLIENT_ID,
         CLIENT_SECRET,
         REDIRECT_URI,
       );
-      const refreshedTokens = await oAuth2Client.refreshAccessToken();
-      oAuth2Client.setCredentials(refreshedTokens.credentials);
-      await saveTokenToFirebase(refreshedTokens.credentials);
-      addLog("Access token refreshed and saved.");
-    } else {
-      const oAuth2Client = new google.auth.OAuth2(
-        CLIENT_ID,
-        CLIENT_SECRET,
-        REDIRECT_URI,
-      );
-      const refreshedTokens = await oAuth2Client.refreshAccessToken();
-      oAuth2Client.setCredentials(refreshedTokens.credentials);
-      await saveTokenToFirebase(refreshedTokens.credentials);
-      addLog("Access token refreshed and saved.");
-    }
+      if (error.response?.status === 401) {
+        addLog("Unauthorized error. Attempting to refresh token...", "error");
+        await refreshAccessToken(oAuth2Client);
+      } else {
+        addLog(`❌ Error during email fetching: ${error.message}`, "error");
+      }
+    
   }
 }
 
