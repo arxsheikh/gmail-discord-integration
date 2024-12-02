@@ -197,7 +197,7 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
         addLog(
           `🚫 Skipping email ${
             index + 1
-          } - Subject does not contain "Alert": ${subject}`,
+          } - Subject does not contain "Alert4524updatchecing": ${subject}`,
         );
         continue;
       }
