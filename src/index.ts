@@ -197,7 +197,7 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
         addLog(
           `🚫 Skipping email ${
             index + 1
-          } - Subject does not contain "Alert4524updatchecing": ${subject}`,
+          } - Subject does not contain "Alert ...z": ${subject}`,
         );
         continue;
       }
@@ -251,31 +251,41 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
   }
 }
 
-
 async function sendToDiscord(
   emailData: { from: string; subject: string; body: string },
 ): Promise<void> {
   try {
+    const { from, subject, body } = emailData;
+
+    // Message payload for Discord webhook
     const messagePayload = {
-      // Place the URL here to force a preview
-      content: "https://www.tradingview.com/chart/FWOGUSDT/RifzEkxn-FWOG/",
+      content: "https://www.tradingview.com/chart/FWOGUSDT/RifzEkxn-FWOG/", // URL for preview
       embeds: [
         {
-          title: emailData.subject,
-          description: `${emailData.body}\n\n[Click here to view chart](https://www.tradingview.com/chart/FWOGUSDT/RifzEkxn-FWOG/)`,
-          fields: [{ name: "From", value: emailData.from }],
-          color: 3066993, // Optional: Set a color for the embed
+          title: subject || "No Subject Provided", // Fallback for missing subject
+          description: body
+            ? `${body}\n\n[Click here to view chart](https://www.tradingview.com/chart/FWOGUSDT/RifzEkxn-FWOG/)`
+            : "No body content provided.", // Fallback for missing body
+          fields: from ? [{ name: "From", value: from }] : undefined, // Include 'From' field only if provided
+          color: 3066993, // Embed color
         },
       ],
     };
 
+    // Log message before sending
     addLog("Sending email to Discord...");
+
+    // Send message to Discord webhook
     await axios.post(WEBHOOK_URL!, messagePayload);
+
+    // Log success
+    addLog("Email successfully sent to Discord.");
   } catch (error) {
+    // Log failure with error details
     addLog("Failed to send email to Discord.");
-    console.error(error);
   }
 }
+
 
 // -------------------- Main Server Setup --------------------
 const app = express();
