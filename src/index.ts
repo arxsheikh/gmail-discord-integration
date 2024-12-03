@@ -63,6 +63,7 @@ async function authorize(): Promise<gmail_v1.Gmail> {
   );
 
   const token = await loadTokenFromFirebase();
+
   if (token) {
     oAuth2Client.setCredentials(token);
 
@@ -76,7 +77,6 @@ async function authorize(): Promise<gmail_v1.Gmail> {
     });
 
     // Check and refresh token if needed
-    await ensureValidAccessToken(oAuth2Client);
 
     addLog("Token successfully set to OAuth2 client.");
   } else {
@@ -84,28 +84,6 @@ async function authorize(): Promise<gmail_v1.Gmail> {
   }
 
   return google.gmail({ version: "v1", auth: oAuth2Client });
-}
-
-// Helper to refresh token if needed
-async function ensureValidAccessToken(oAuth2Client: any): Promise<void> {
-  try {
-    const tokenInfo = await oAuth2Client.getAccessToken();
-    const expiryDate = tokenInfo.res?.data?.expiry_date;
-
-    if (expiryDate && Date.now() > expiryDate) {
-      addLog("Access token expired. Refreshing...");
-      const refreshedTokens = await oAuth2Client.refreshAccessToken();
-      oAuth2Client.setCredentials(refreshedTokens.credentials);
-      await saveTokenToFirebase(refreshedTokens.credentials);
-      addLog("Access token refreshed and saved.");
-    }
-  } catch (error) {
-    addLog(
-      "Failed to refresh access token. Reauthorization may be needed.",
-      "error",
-    );
-    throw error;
-  }
 }
 
 // Generates the Google OAuth URL for authorization
@@ -154,6 +132,37 @@ async function handleOAuthCallback(code: string) {
     }, parseInt(REFRESH_MAILS_TIME_MS));
   } catch (error) {
     addLog("Error during email fetching process after authorization.", "error");
+  }
+}
+// Function to refresh the access token and save to Firebase
+async function refreshAccessToken(): Promise<void> {
+  try {
+    const token = await loadTokenFromFirebase();
+    if (!token || !token.refresh_token) {
+      throw new Error(
+        "Refresh token is missing. Consent may be required again.",
+      );
+    }
+
+    const oAuth2Client = new google.auth.OAuth2(
+      CLIENT_ID,
+      CLIENT_SECRET,
+      REDIRECT_URI,
+    );
+    oAuth2Client.setCredentials({ refresh_token: token.refresh_token });
+
+    // Refresh the access token
+    const { credentials } = await oAuth2Client.refreshAccessToken();
+
+    const updatedTokens = { ...token, ...credentials }; // Merge the new access token with existing data
+
+    // Save the updated token back to Firebase
+    await saveTokenToFirebase(updatedTokens);
+    addLog("Access token refreshed and saved to Firebase.");
+  } catch (error) {
+    const err = error as Error;
+    addLog(`Error refreshing access token: ${err.message}`, "error");
+    throw err; // Re-throw the error if refreshing fails
   }
 }
 
@@ -213,7 +222,7 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       addLog(
         `📤 Sending email to Discord - From: ${from}, Subject: ${subject}`,
       );
-      await sendToDiscord({ subject});
+      await sendToDiscord({ subject });
 
       await gmail.users.messages.modify({
         userId: "me",
@@ -235,24 +244,17 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
     );
   } catch (error: any) {
     if (error.response?.status === 401) {
-      addLog("Unauthorized error. Attempting to refresh token...", "error");
-      const oAuth2Client = new google.auth.OAuth2(
-        CLIENT_ID,
-        CLIENT_SECRET,
-        REDIRECT_URI,
-      );
-      const refreshedTokens = await oAuth2Client.refreshAccessToken();
-      oAuth2Client.setCredentials(refreshedTokens.credentials);
-      await saveTokenToFirebase(refreshedTokens.credentials);
-      addLog("Access token refreshed and saved.");
+      addLog("Access token expired. Refreshing and retrying...", "warn");
+      await refreshAccessToken(); // Refresh the token
+      const refreshedGmail = await authorize(); // Re-authorize with the new token
+      await fetchAndProcessEmails(refreshedGmail); // Retry the operation
     } else {
-      addLog(`❌ Error during email fetching: ${error.message}`, "error");
+      addLog(`Error during email fetching: ${error.message}`, "error");
     }
   }
 }
 
-
-async function sendToDiscord(emailData: { subject: string; }): Promise<void> {
+async function sendToDiscord(emailData: { subject: string }): Promise<void> {
   try {
     const messagePayload = {
       // Include @everyone and the subject as the content
@@ -266,7 +268,6 @@ async function sendToDiscord(emailData: { subject: string; }): Promise<void> {
     addLog("Failed to send message to Discord.");
   }
 }
-
 
 // -------------------- Main Server Setup --------------------
 const app = express();

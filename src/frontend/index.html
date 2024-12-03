@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Google OAuth2 Token</title>
+</head>
+<body>
+  <h1>Google OAuth2 Token Management</h1>
+  <p>Click the buttons below to manage your Google tokens:</p>
+
+  <button id="generate-token">Generate New Access Token</button>
+
+  <p id="response"></p>
+
+  <script>
+    // Function to request token generation
+    document.getElementById('generate-token').addEventListener('click', () => {
+      fetch('/generate-token', { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+          document.getElementById('response').textContent = JSON.stringify(data, null, 2);
+        })
+        .catch(error => {
+          document.getElementById('response').textContent = 'Error: ' + error.message;
+        });
+    });
+  </script>
+</body>
+</html>
