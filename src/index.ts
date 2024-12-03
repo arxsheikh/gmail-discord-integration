@@ -3,6 +3,7 @@ import express from "express";
 import axios from "axios";
 import dotenv from "dotenv";
 import { child, database, get, ref, set } from "./firebase";
+let gmailClient: gmail_v1.Gmail | null = null;
 
 // Load environment variables
 dotenv.config();
@@ -169,6 +170,7 @@ async function refreshAccessToken(): Promise<void> {
 // -------------------- Gmail Functions --------------------
 
 
+// -------------------- Fetch and Process Emails --------------------
 async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
   addLog("📬 Fetching unread emails...");
 
@@ -187,7 +189,8 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       return;
     }
 
-    let skipped = 0, processed = 0;
+    let skipped = 0,
+      processed = 0;
 
     for (const [index, message] of messages.entries()) {
       const msg = await gmail.users.messages.get({
@@ -202,6 +205,14 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       if (!subject.includes("Alert")) {
         skipped++;
         addLog(`🚫 Skipped ${index + 1}: "${subject}"`);
+
+        // Mark skipped email as read
+        await gmail.users.messages.modify({
+          userId: "me",
+          id: message.id!,
+          requestBody: { removeLabelIds: ["UNREAD"] },
+        });
+        addLog("✅ Skipped email marked as read.");
         continue;
       }
 
@@ -210,12 +221,13 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       await sendToDiscord({ subject });
       addLog("✅ Sent!");
 
+      // Mark processed email as read
       await gmail.users.messages.modify({
         userId: "me",
         id: message.id!,
         requestBody: { removeLabelIds: ["UNREAD"] },
       });
-      addLog("✅ Marked as read.");
+      addLog("✅ Processed email marked as read.");
 
       processed++;
     }
@@ -224,14 +236,15 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
   } catch (error: any) {
     if (error.response?.status === 401) {
       addLog("⚠️ Token expired, refreshing...");
-      await refreshAccessToken();
-      const refreshedGmail = await authorize();
-      await fetchAndProcessEmails(refreshedGmail);
+      gmailClient = await refreshAccessTokenIfNeeded();
+      await fetchAndProcessEmails(gmailClient); // Retry with the refreshed client
     } else {
       addLog(`❌ Error: ${error.message}`, "error");
     }
   }
 }
+
+
 
 
 // Discord Notification Function
@@ -297,23 +310,62 @@ app.get("/logs", (req, res) => {
   res.json(logs); // Return logs as JSON
 });
 
-// Start Server
-app.listen(PORT, async () => {
-  addLog(`Server running on http://localhost:${PORT}`);
+
+// -------------------- Token Refresh --------------------
+async function refreshAccessTokenIfNeeded(): Promise<gmail_v1.Gmail> {
+  try {
+    const token = await loadTokenFromFirebase();
+    if (!token || !token.refresh_token) {
+      throw new Error("Refresh token is missing. Consent may be required again.");
+    }
+
+    const oAuth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
+    oAuth2Client.setCredentials({ refresh_token: token.refresh_token });
+
+    // Refresh the access token
+    const { credentials } = await oAuth2Client.refreshAccessToken();
+
+    const updatedTokens = { ...token, ...credentials }; // Merge the new access token with existing data
+
+    // Save the updated token back to Firebase
+    await saveTokenToFirebase(updatedTokens);
+    addLog("Access token refreshed and saved to Firebase.");
+
+    // Reinitialize Gmail client
+    return google.gmail({ version: "v1", auth: oAuth2Client });
+  } catch (error) {
+    addLog(`❌ Error refreshing access token: ${(error as Error).message}`, "error");
+    throw error; // Re-throw error if refresh fails
+  }
+}
+
+
+
+// -------------------- Continuous Execution --------------------
+async function startContinuousEmailProcessing(): Promise<void> {
   try {
     const gmail = await authorize();
+    gmailClient = gmail;
 
-    // Fetch emails immediately
+    // Process emails immediately
     await fetchAndProcessEmails(gmail);
 
-    // Schedule periodic email fetching
+    // Set up periodic execution
     setInterval(async () => {
-      await fetchAndProcessEmails(gmail);
+      try {
+        const activeGmail = await refreshAccessTokenIfNeeded();
+        await fetchAndProcessEmails(activeGmail);
+      } catch (error) {
+        addLog("❌ Error in periodic email fetching.", "error");
+      }
     }, parseInt(REFRESH_MAILS_TIME_MS));
   } catch (error) {
-    addLog(
-      "Gmail API not yet authorized. Visit the /authorize endpoint to authorize.",
-      "warn",
-    );
+    addLog(`❌ Failed to start email processing: ${(error as Error).message}`, "error");
   }
+}
+
+// -------------------- Main --------------------
+app.listen(PORT, async () => {
+  addLog(`Server running on http://localhost:${PORT}`);
+  await startContinuousEmailProcessing();
 });
