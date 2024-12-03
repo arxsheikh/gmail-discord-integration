@@ -167,10 +167,10 @@ async function refreshAccessToken(): Promise<void> {
 }
 
 // -------------------- Gmail Functions --------------------
-let firstEmailProcessed = false; // Tracks if the first email has been processed
+
 
 async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
-  addLog("📬 Starting to fetch and process unread emails...");
+  addLog("📬 Fetching unread emails...");
 
   try {
     const res = await gmail.users.messages.list({
@@ -180,16 +180,16 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
     });
 
     const messages = res.data.messages || [];
-    addLog(`✅ Total unread emails found: ${messages.length}`);
+    addLog(`✅ Found ${messages.length} unread emails.`);
 
     if (messages.length === 0) {
-      addLog("ℹ️ No unread emails found. Exiting process.");
+      addLog("ℹ️ No unread emails.");
       return;
     }
 
-    for (const [index, message] of messages.entries()) {
-      addLog(`🔍 Processing email ${index + 1} of ${messages.length}...`);
+    let skipped = 0, processed = 0;
 
+    for (const [index, message] of messages.entries()) {
       const msg = await gmail.users.messages.get({
         userId: "me",
         id: message.id!,
@@ -197,87 +197,53 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       });
 
       const headers = msg.data.payload?.headers || [];
-      const subject = headers.find((header) =>
-        header.name === "Subject"
-      )?.value || "No Subject";
-      const from = headers.find((header) => header.name === "From")?.value ||
-        "Unknown Sender";
+      const subject = headers.find((header) => header.name === "Subject")?.value || "No Subject";
 
       if (!subject.includes("Alert")) {
-        addLog(
-          `🚫 Skipping email ${
-            index + 1
-          } - Subject does not contain "Alert": ${subject}`,
-        );
+        skipped++;
+        addLog(`🚫 Skipped ${index + 1}: "${subject}"`);
         continue;
       }
 
-      // Prevent sending multiple emails to Discord
-      if (!firstEmailProcessed) {
-        const bodyPart = msg.data.payload?.parts?.find(
-          (part) =>
-            part.mimeType === "text/plain" || part.mimeType === "text/html",
-        );
-        const body = bodyPart?.body?.data
-          ? Buffer.from(bodyPart.body.data, "base64").toString("utf-8")
-          : "No Body Content";
+      addLog(`✅ Got: "${subject}"`);
+      addLog("📤 Sending to Discord...");
+      await sendToDiscord({ subject });
+      addLog("✅ Sent!");
 
-        addLog(
-          `📤 Sending email to Discord - From: ${from}, Subject: ${subject}`,
-        );
-        await sendToDiscord({ subject });
-
-        // Update the state to prevent further notifications
-        firstEmailProcessed = true;
-        addLog(`✅ First email sent to Discord. Further emails will be ignored.`);
-      } else {
-        addLog(`ℹ️ Skipping email - Already sent the first email to Discord.`);
-      }
-
-      // Mark the email as read
       await gmail.users.messages.modify({
         userId: "me",
         id: message.id!,
         requestBody: { removeLabelIds: ["UNREAD"] },
       });
+      addLog("✅ Marked as read.");
 
-      addLog(`✅ Email processed and marked as read: ${subject}`);
+      processed++;
     }
 
-    const currentTime = new Date();
-    const refreshTime = new Date(
-      currentTime.getTime() + parseInt(REFRESH_MAILS_TIME_MS),
-    );
-
-    addLog("🎉 Email processing completed successfully!");
-    addLog(
-      `⌛ Next email check will be at ${refreshTime.toLocaleTimeString()} (${refreshTime.toLocaleDateString()}). Current time: ${currentTime.toLocaleTimeString()}`,
-    );
+    addLog(`🎉 Done: Processed ${processed}, Skipped ${skipped}.`);
   } catch (error: any) {
     if (error.response?.status === 401) {
-      addLog("Access token expired. Refreshing and retrying...", "warn");
-      await refreshAccessToken(); // Refresh the token
-      const refreshedGmail = await authorize(); // Re-authorize with the new token
-      await fetchAndProcessEmails(refreshedGmail); // Retry the operation
+      addLog("⚠️ Token expired, refreshing...");
+      await refreshAccessToken();
+      const refreshedGmail = await authorize();
+      await fetchAndProcessEmails(refreshedGmail);
     } else {
-      addLog(`Error during email fetching: ${error.message}`, "error");
+      addLog(`❌ Error: ${error.message}`, "error");
     }
   }
 }
 
 
+// Discord Notification Function
 async function sendToDiscord(emailData: { subject: string }): Promise<void> {
   try {
     const messagePayload = {
-      // Include @everyone and the subject as the content
-      content: `@everyone ${emailData.subject}`, // Dynamically takes the subject with the URL
+      content: `@everyone ${emailData.subject}`,
     };
 
-    addLog("Sending message to Discord...");
-    await axios.post(WEBHOOK_URL!, messagePayload); // Ensure WEBHOOK_URL is defined and valid
-    addLog("Message successfully sent to Discord.");
+    await axios.post(WEBHOOK_URL!, messagePayload);
   } catch (error) {
-    addLog("Failed to send message to Discord.");
+    addLog(`❌ Failed to send message to Discord`, "error");
   }
 }
 
