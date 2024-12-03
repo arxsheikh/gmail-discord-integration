@@ -167,6 +167,7 @@ async function refreshAccessToken(): Promise<void> {
 }
 
 // -------------------- Gmail Functions --------------------
+let firstEmailProcessed = false; // Tracks if the first email has been processed
 
 async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
   addLog("📬 Starting to fetch and process unread emails...");
@@ -211,19 +212,29 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
         continue;
       }
 
-      const bodyPart = msg.data.payload?.parts?.find(
-        (part) =>
-          part.mimeType === "text/plain" || part.mimeType === "text/html",
-      );
-      const body = bodyPart?.body?.data
-        ? Buffer.from(bodyPart.body.data, "base64").toString("utf-8")
-        : "No Body Content";
+      // Prevent sending multiple emails to Discord
+      if (!firstEmailProcessed) {
+        const bodyPart = msg.data.payload?.parts?.find(
+          (part) =>
+            part.mimeType === "text/plain" || part.mimeType === "text/html",
+        );
+        const body = bodyPart?.body?.data
+          ? Buffer.from(bodyPart.body.data, "base64").toString("utf-8")
+          : "No Body Content";
 
-      addLog(
-        `📤 Sending email to Discord - From: ${from}, Subject: ${subject}`,
-      );
-      await sendToDiscord({ subject });
+        addLog(
+          `📤 Sending email to Discord - From: ${from}, Subject: ${subject}`,
+        );
+        await sendToDiscord({ subject });
 
+        // Update the state to prevent further notifications
+        firstEmailProcessed = true;
+        addLog(`✅ First email sent to Discord. Further emails will be ignored.`);
+      } else {
+        addLog(`ℹ️ Skipping email - Already sent the first email to Discord.`);
+      }
+
+      // Mark the email as read
       await gmail.users.messages.modify({
         userId: "me",
         id: message.id!,
@@ -253,6 +264,7 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
     }
   }
 }
+
 
 async function sendToDiscord(emailData: { subject: string }): Promise<void> {
   try {
