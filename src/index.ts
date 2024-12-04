@@ -135,37 +135,6 @@ async function handleOAuthCallback(code: string) {
     addLog("Error during email fetching process after authorization.", "error");
   }
 }
-// Function to refresh the access token and save to Firebase
-async function refreshAccessToken(): Promise<void> {
-  try {
-    const token = await loadTokenFromFirebase();
-    if (!token || !token.refresh_token) {
-      throw new Error(
-        "Refresh token is missing. Consent may be required again.",
-      );
-    }
-
-    const oAuth2Client = new google.auth.OAuth2(
-      CLIENT_ID,
-      CLIENT_SECRET,
-      REDIRECT_URI,
-    );
-    oAuth2Client.setCredentials({ refresh_token: token.refresh_token });
-
-    // Refresh the access token
-    const { credentials } = await oAuth2Client.refreshAccessToken();
-
-    const updatedTokens = { ...token, ...credentials }; // Merge the new access token with existing data
-
-    // Save the updated token back to Firebase
-    await saveTokenToFirebase(updatedTokens);
-    addLog("Access token refreshed and saved to Firebase.");
-  } catch (error) {
-    const err = error as Error;
-    addLog(`Error refreshing access token: ${err.message}`, "error");
-    throw err; // Re-throw the error if refreshing fails
-  }
-}
 
 // -------------------- Gmail Functions --------------------
 
@@ -319,7 +288,12 @@ async function refreshAccessTokenIfNeeded(): Promise<gmail_v1.Gmail> {
       throw new Error("Refresh token is missing. Consent may be required again.");
     }
 
-    const oAuth2Client = new google.auth.OAuth2(CLIENT_ID, CLIENT_SECRET, REDIRECT_URI);
+    const oAuth2Client = new google.auth.OAuth2(
+      CLIENT_ID,
+      CLIENT_SECRET,
+      REDIRECT_URI,
+    );
+
     oAuth2Client.setCredentials({ refresh_token: token.refresh_token });
 
     // Refresh the access token
@@ -329,7 +303,12 @@ async function refreshAccessTokenIfNeeded(): Promise<gmail_v1.Gmail> {
 
     // Save the updated token back to Firebase
     await saveTokenToFirebase(updatedTokens);
-    addLog("Access token refreshed and saved to Firebase.");
+    addLog(`Access token refreshed. New token expires in ${credentials.expiry_date}.`);
+
+    // Log the refresh token usage explicitly
+    addLog(
+      `Refresh Token Used: ${credentials.refresh_token || token.refresh_token}`,
+    );
 
     // Reinitialize Gmail client
     return google.gmail({ version: "v1", auth: oAuth2Client });
@@ -338,7 +317,19 @@ async function refreshAccessTokenIfNeeded(): Promise<gmail_v1.Gmail> {
     throw error; // Re-throw error if refresh fails
   }
 }
-
+// -------------------- Periodic Refresh Token Logging --------------------
+setInterval(async () => {
+  try {
+    const token = await loadTokenFromFirebase();
+    if (token && token.refresh_token) {
+      addLog(`🔄 Refresh Token in Use: ${token.refresh_token}`);
+    } else {
+      addLog("⚠️ No refresh token found during periodic check.", "warn");
+    }
+  } catch (error) {
+    addLog(`❌ Error during periodic refresh token logging: ${(error as Error).message}`, "error");
+  }
+}, 60000); // Log refresh token status every 60 seconds
 
 
 // -------------------- Continuous Execution --------------------
