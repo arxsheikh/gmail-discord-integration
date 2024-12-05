@@ -18,6 +18,25 @@ const oauth2Client = new google.auth.OAuth2(client_id, client_secret, redirect_u
 const app = express();
 const PORT = 3000;
 
+app.get('/oauth2callback', async (req, res) => {
+  const code = req.query.code as string;
+  if (!code) {
+    res.status(400).send('Authorization code is missing.');
+    return;
+  }
+
+  try {
+    const { tokens } = await oauth2Client.getToken(code);
+    oauth2Client.setCredentials(tokens);
+
+    // Save tokens to file
+    fs.writeFileSync(TOKEN_PATH, JSON.stringify(tokens, null, 2));
+    res.send('<h1>Authorization successful!</h1><p>You can close this window.</p>');
+  } catch (error) {
+    res.status(500).send('Failed to retrieve access token.');
+  }
+});
+
 // Serve the frontend
 app.use(express.static(path.join(__dirname, 'frontend')));
 
