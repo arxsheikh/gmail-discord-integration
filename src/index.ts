@@ -329,19 +329,32 @@ async function startContinuousEmailProcessing(): Promise<void> {
     // Process emails immediately
     await fetchAndProcessEmails(gmail);
 
-    // Set up periodic execution
+    // Schedule token refresh and email processing
     setInterval(async () => {
       try {
-        const activeGmail = await refreshAccessTokenIfNeeded();
-        await fetchAndProcessEmails(activeGmail);
+        const token = await loadTokenFromFirebase();
+        if (token && token.expiry_date) {
+          const currentTime = Date.now();
+          const timeUntilExpiry = token.expiry_date - currentTime;
+
+          // Refresh only if the token is about to expire in the next 15 minutes
+          if (timeUntilExpiry < 15 * 60 * 1000) {
+            const activeGmail = await refreshAccessTokenIfNeeded();
+            gmailClient = activeGmail;
+            addLog("Token refreshed successfully.");
+          }
+        }
+
+        await fetchAndProcessEmails(gmailClient!);
       } catch (error) {
         addLog("❌ Error in periodic email fetching.", "error");
       }
-    }, parseInt(REFRESH_MAILS_TIME_MS));
+    }, 45 * 60 * 1000); // Set interval to 45 minutes
   } catch (error) {
     addLog(`❌ Failed to start email processing: ${(error as Error).message}`, "error");
   }
 }
+
 
 // -------------------- Main --------------------
 app.listen(PORT, async () => {
