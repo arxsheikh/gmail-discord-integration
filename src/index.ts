@@ -151,6 +151,8 @@ async function handleOAuthCallback(code: string) {
 
 
 // -------------------- Fetch and Process Emails --------------------
+const processedEmails = new Set<string>(); // In-memory storage for processed email IDs
+
 async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
   addLog("📬 Fetching unread emails...");
 
@@ -173,6 +175,12 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       processed = 0;
 
     for (const [index, message] of messages.entries()) {
+      if (processedEmails.has(message.id!)) {
+        addLog(`🚫 Skipped ${index + 1}: Email already processed (ID: ${message.id})`);
+        skipped++;
+        continue; // Skip already processed emails
+      }
+
       const msg = await gmail.users.messages.get({
         userId: "me",
         id: message.id!,
@@ -201,6 +209,10 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
       await sendToDiscord({ subject });
       addLog("✅ Sent!");
 
+      // Mark email as processed and save its ID
+      processedEmails.add(message.id!);
+      addLog(`📌 Marked email as processed (ID: ${message.id}).`);
+
       // Mark processed email as read
       await gmail.users.messages.modify({
         userId: "me",
@@ -223,7 +235,6 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
     }
   }
 }
-
 
 
 
