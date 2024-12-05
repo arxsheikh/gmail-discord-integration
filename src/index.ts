@@ -153,7 +153,15 @@ async function handleOAuthCallback(code: string) {
 // -------------------- Fetch and Process Emails --------------------
 const processedEmails = new Set<string>(); // In-memory storage for processed email IDs
 
+let isProcessingEmails = false;
+
 async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
+  if (isProcessingEmails) {
+    addLog("⚠️ Email fetching is already in progress. Skipping this call.");
+    return;
+  }
+
+  isProcessingEmails = true; // Lock
   addLog("📬 Fetching unread emails...");
 
   try {
@@ -233,6 +241,8 @@ async function fetchAndProcessEmails(gmail: gmail_v1.Gmail): Promise<void> {
     } else {
       addLog(`❌ Error: ${error.message}`, "error");
     }
+  } finally {
+    isProcessingEmails = false; // Unlock
   }
 }
 
@@ -262,8 +272,8 @@ app.get("/", async (req, res) => {
 
     setInterval(async () => {
       await fetchAndProcessEmails(gmail);
-    }, parseInt(REFRESH_MAILS_TIME_MS));
-
+   }, parseInt(REFRESH_MAILS_TIME_MS));
+   
     res.send(` <div style="font-family: Arial, sans-serif; text-align: center; padding: 20px; background-color: #e8f5e9; height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #1b5e20;"> <h1 style="font-size: 30px; margin-bottom: 20px; color: #2e7d32;">Welcome to the Email Fetcher Service</h1> <p style="font-size: 18px; margin-bottom: 30px; color: #388e3c;">Authorization successful. Email fetching in progress.</p> <a href="/logview" style="text-decoration: none; color: white; background-color: #2e7d32; padding: 12px 30px; border-radius: 25px; font-size: 16px; font-weight: bold; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); transition: all 0.3s ease;"> See Logs </a> <p style="font-size: 14px; margin-top: 20px; color: #2e7d32;">Stay updated with the latest email activity.</p> </div>
     `);
     
@@ -356,15 +366,17 @@ async function startContinuousEmailProcessing(): Promise<void> {
           }
         }
 
+        // Fetch and process emails
         await fetchAndProcessEmails(gmailClient!);
       } catch (error) {
         addLog("❌ Error in periodic email fetching.", "error");
       }
-    }, 45 * 60 * 1000); // Set interval to 45 minutes
+    }, parseInt(REFRESH_MAILS_TIME_MS)); // Use the same interval for fetching emails
   } catch (error) {
     addLog(`❌ Failed to start email processing: ${(error as Error).message}`, "error");
   }
 }
+
 
 
 // -------------------- Main --------------------
