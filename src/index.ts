@@ -149,7 +149,6 @@ async function handleOAuthCallback(code: string) {
 
 // -------------------- Gmail Functions --------------------
 
-
 // -------------------- Fetch and Process Emails --------------------
 const processedEmails = new Set<string>(); // In-memory storage for processed email IDs
 
@@ -264,27 +263,52 @@ async function sendToDiscord(emailData: { subject: string }): Promise<void> {
 // -------------------- Main Server Setup --------------------
 const app = express();
 
-// Routes for Authorization and Logs
+// -------------------- Flag to Track Interval Initialization --------------------
+let isIntervalInitialized = false;
+
+// -------------------- Landing Page Route --------------------
 app.get("/", async (req, res) => {
   try {
     const gmail = await authorize();
-    addLog("Authorization successful. Initializing email fetch process...");
+    addLog("Authorization successful.");
 
-    setInterval(async () => {
-      await fetchAndProcessEmails(gmail);
-   }, parseInt(REFRESH_MAILS_TIME_MS));
-   
-    res.send(` <div style="font-family: Arial, sans-serif; text-align: center; padding: 20px; background-color: #e8f5e9; height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #1b5e20;"> <h1 style="font-size: 30px; margin-bottom: 20px; color: #2e7d32;">Welcome to the Email Fetcher Service</h1> <p style="font-size: 18px; margin-bottom: 30px; color: #388e3c;">Authorization successful. Email fetching in progress.</p> <a href="/logview" style="text-decoration: none; color: white; background-color: #2e7d32; padding: 12px 30px; border-radius: 25px; font-size: 16px; font-weight: bold; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); transition: all 0.3s ease;"> See Logs </a> <p style="font-size: 14px; margin-top: 20px; color: #2e7d32;">Stay updated with the latest email activity.</p> </div>
+    // Send the response regardless of interval initialization
+    res.send(`
+      <div style="font-family: Arial, sans-serif; text-align: center; padding: 20px; background-color: #e8f5e9; height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #1b5e20;">
+        <h1 style="font-size: 30px; margin-bottom: 20px; color: #2e7d32;">Welcome to the Email Fetcher Service</h1>
+        <p style="font-size: 18px; margin-bottom: 30px; color: #388e3c;">Authorization successful. Email fetching in progress.</p>
+        <a href="/logview" style="text-decoration: none; color: white; background-color: #2e7d32; padding: 12px 30px; border-radius: 25px; font-size: 16px; font-weight: bold; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); transition: all 0.3s ease;">See Logs</a>
+        <p style="font-size: 14px; margin-top: 20px; color: #2e7d32;">Stay updated with the latest email activity.</p>
+      </div>
     `);
-    
-    
+
+    // Initialize email fetching interval if not already done
+    if (!isIntervalInitialized) {
+      isIntervalInitialized = true;
+
+      setInterval(async () => {
+        try {
+          await fetchAndProcessEmails(gmail);
+        } catch (error) {
+          addLog(`Error in email fetching: ${(error as Error).message}`, "error");
+        }
+      }, parseInt(REFRESH_MAILS_TIME_MS));
+
+      addLog("Email fetching interval initialized.");
+    }
   } catch (error) {
     const authUrl = generateAuthUrl();
-    res.send(` <div style="font-family: Arial, sans-serif; text-align: center; padding: 20px; background-color: #f8f4ff; height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #4a148c;"> <h1 style="font-size: 30px; margin-bottom: 20px; color: #6a1b9a;">Authorization Required</h1> <p style="font-size: 18px; margin-bottom: 30px; color: #7b1fa2;">To proceed, please authorize Gmail access.</p> <a href="${authUrl}" style="text-decoration: none; color: white; background-color: #6a1b9a; padding: 12px 30px; border-radius: 25px; font-size: 16px; font-weight: bold; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); transition: all 0.3s ease;"> Authorize Now </a> <p style="font-size: 14px; margin-top: 20px; color: #6a1b9a;">This step ensures secure access to Gmail services.</p> </div> `);
-    
-    
+    res.send(`
+      <div style="font-family: Arial, sans-serif; text-align: center; padding: 20px; background-color: #f8f4ff; height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; color: #4a148c;">
+        <h1 style="font-size: 30px; margin-bottom: 20px; color: #6a1b9a;">Authorization Required</h1>
+        <p style="font-size: 18px; margin-bottom: 30px; color: #7b1fa2;">To proceed, please authorize Gmail access.</p>
+        <a href="${authUrl}" style="text-decoration: none; color: white; background-color: #6a1b9a; padding: 12px 30px; border-radius: 25px; font-size: 16px; font-weight: bold; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); transition: all 0.3s ease;">Authorize Now</a>
+        <p style="font-size: 14px; margin-top: 20px; color: #6a1b9a;">This step ensures secure access to Gmail services.</p>
+      </div>
+    `);
   }
 });
+
 
 app.get("/oauth2callback", async (req, res) => {
   const code = req.query.code as string;

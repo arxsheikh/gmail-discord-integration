@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Discord Webhook Sender</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex items-center justify-center">
+  <div class="bg-white shadow-md rounded px-8 pt-6 pb-8 w-full max-w-md">
+    <h2 class="text-2xl font-bold mb-4 text-gray-800">Discord Webhook Sender</h2>
+
+    <!-- Input for the Webhook URL -->
+    <div class="mb-4">
+      <label for="webhookUrl" class="block text-gray-700 text-sm font-bold mb-2">Webhook URL:</label>
+      <input id="webhookUrl" type="text" value="https://discord.com/api/webhooks/1304737952609337394/Wd2D-9D34NjQcqm6M1nHvHq6v2R51QpHAy6pVUe9E8VhYV1iGAbHzu0JCWhB49wb08HA" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline">
+    </div>
+
+    <!-- Input for the Message -->
+    <div class="mb-4">
+      <label for="message" class="block text-gray-700 text-sm font-bold mb-2">Message:</label>
+      <textarea id="message" rows="4" placeholder="Enter your message here" class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline"></textarea>
+    </div>
+
+    <!-- Send Button -->
+    <div class="flex items-center justify-between">
+      <button id="sendButton" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline">
+        Send
+      </button>
+    </div>
+
+    <!-- Status Message -->
+    <p id="statusMessage" class="mt-4 text-sm text-gray-600"></p>
+  </div>
+
+  <script>
+    document.getElementById('sendButton').addEventListener('click', async () => {
+      const webhookUrl = document.getElementById('webhookUrl').value;
+      const message = document.getElementById('message').value;
+      const statusMessage = document.getElementById('statusMessage');
+
+      // Basic validation
+      if (!webhookUrl || !message) {
+        statusMessage.textContent = "Please provide both the webhook URL and a message.";
+        statusMessage.classList.add('text-red-500');
+        return;
+      }
+
+      // Send message to Discord webhook
+      try {
+        const response = await fetch(webhookUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ content: message }),
+        });
+
+        if (response.ok) {
+          statusMessage.textContent = "Message sent successfully!";
+          statusMessage.classList.remove('text-red-500');
+          statusMessage.classList.add('text-green-500');
+        } else {
+          throw new Error(`Error: ${response.statusText}`);
+        }
+      } catch (error) {
+        statusMessage.textContent = `Failed to send message: ${error.message}`;
+        statusMessage.classList.add('text-red-500');
+      }
+    });
+  </script>
+</body>
+</html>
